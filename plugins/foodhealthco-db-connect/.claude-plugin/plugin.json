@@ -1,0 +1,8 @@
+{
+  "name": "foodhealthco-db-connect",
+  "version": "0.1.1",
+  "description": "Reach FoodHealth's NDO Postgres (DigitalOcean) and HeroDB (GCP Cloud SQL) from a local machine. Handles cloud-sql-proxy lifecycle, credential pulls from Dagster Cloud secrets, and standard psql invocations.",
+  "author": {
+    "name": "FoodHealth Co"
+  }
+}

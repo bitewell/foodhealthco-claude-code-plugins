@@ -1,0 +1,19 @@
+{
+  "name": "foodhealthco",
+  "owner": {
+    "name": "FoodHealth Co",
+    "url": "https://github.com/bitewell"
+  },
+  "plugins": [
+    {
+      "name": "foodhealthco-prototype",
+      "source": "./plugins/foodhealthco-prototype",
+      "description": "Prototype features in the FHS mobile app and Chrome extension."
+    },
+    {
+      "name": "foodhealthco-db-connect",
+      "source": "./plugins/foodhealthco-db-connect",
+      "description": "Connect to NDO Postgres (DigitalOcean) and HeroDB (GCP Cloud SQL) from a local machine."
+    }
+  ]
+}
