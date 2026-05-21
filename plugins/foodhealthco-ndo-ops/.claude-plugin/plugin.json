@@ -1,0 +1,8 @@
+{
+  "name": "foodhealthco-ndo-ops",
+  "version": "0.1.0",
+  "description": "Run nutrition-data-ops scoring/tagging/ingestion operations (FHS scoring, Text2Tag, profile backfills, score approvals, client publishing). Wraps 19 manage.py commands with CSV-upload, env translation, prod confirmation, and per-command preflight read-outs that bucket inputs into update/skip/block before any write.",
+  "author": {
+    "name": "FoodHealth Co"
+  }
+}
