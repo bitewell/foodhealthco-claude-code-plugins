@@ -479,6 +479,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "--summary-out)."
         ),
     )
+    parser.add_argument(
+        "--no-postflight",
+        action="store_true",
+        help=(
+            "Skip the post-run verification. Postflight queries the destination "
+            "table(s) after a successful run and compares the actual change "
+            "count against the preflight's `will_update` projection. Surfaces "
+            "silent drift (e.g. partial FHS API rejections). Runs by default "
+            "for sync commands with a postflight impl (see "
+            "postflight.POSTFLIGHT_REGISTRY)."
+        ),
+    )
     ns, unknown = parser.parse_known_args(argv)
     ns.sync = ns.sync == "true"
     # Strip the literal `--` separator if present, then pass the rest through
@@ -497,6 +509,8 @@ def write_summary(
     elapsed_s: float,
     preflight_payload: dict | None = None,
     preflight_skipped_reason: str | None = None,
+    postflight_payload: dict | None = None,
+    postflight_skipped_reason: str | None = None,
 ) -> None:
     """Write a JSON run-summary file (best-effort; never raises)."""
     payload = {
@@ -514,6 +528,8 @@ def write_summary(
         "dry_run": bool(args.dry_run),
         "preflight": preflight_payload,
         "preflight_skipped_reason": preflight_skipped_reason,
+        "postflight": postflight_payload,
+        "postflight_skipped_reason": postflight_skipped_reason,
     }
     try:
         with open(path, "w") as f:
@@ -525,13 +541,18 @@ def write_summary(
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at_dt = datetime.now(timezone.utc)
+    started_at = started_at_dt.isoformat()
     t0 = time.monotonic()
     spaces_key: str | None = None
     input_count: int | None = None
     exit_code = 1  # pessimistic default in case we exit before run()
     preflight_payload: dict | None = None
     preflight_skipped_reason: str | None = None
+    preflight_ids: list[int] | None = None
+    preflight_expected: int | None = None
+    postflight_payload: dict | None = None
+    postflight_skipped_reason: str | None = None
 
     try:
         if NDO_ROOT is None or not NDO_ROOT.exists():
@@ -559,20 +580,43 @@ def main(argv: list[str] | None = None) -> int:
         # Pre-flight: inspect inputs vs DB state and (for prod) prompt before
         # any write. Runs only when a preflight impl exists for the command;
         # see preflight.PREFLIGHT_REGISTRY. ENG-938.
-        from preflight import run_preflight, confirm_or_abort  # local import
+        from preflight import run_preflight, confirm_or_abort, extract_ids_for_preflight  # local import
 
         report, preflight_skipped_reason = run_preflight(args, spec, ndo_env)
         if report is not None:
             preflight_payload = report.to_dict()
+            preflight_expected = report.will_update_count
             if not confirm_or_abort(report, args=args):
                 exit_code = 130  # SIGINT-style; "user aborted"
                 return exit_code
         elif preflight_skipped_reason and not args.no_preflight:
             print(f"[preflight] skipped: {preflight_skipped_reason}", flush=True)
 
+        # Capture the input IDs once for postflight (extract_ids_for_preflight
+        # is read-only — no Spaces side effects).
+        preflight_ids, _ = extract_ids_for_preflight(args, spec)
+
         spaces_key, input_count = resolve_input(args, spec)
         cmd = build_manage_cmd(args, spec, spaces_key)
         exit_code = run(cmd, ndo_env, args.dry_run)
+
+        # Post-flight: only run if subprocess succeeded and this wasn't a dry-run.
+        # See postflight.POSTFLIGHT_REGISTRY. Skips when --sync false (async).
+        if exit_code == 0 and not args.dry_run and not getattr(args, "no_postflight", False):
+            from postflight import run_postflight  # local import
+
+            post_report, postflight_skipped_reason = run_postflight(
+                args, spec, ndo_env,
+                ids=preflight_ids,
+                run_started_at=started_at_dt,
+                expected_updates=preflight_expected,
+            )
+            if post_report is not None:
+                postflight_payload = post_report.to_dict()
+                print(post_report.format(), flush=True)
+            elif postflight_skipped_reason:
+                print(f"[postflight] skipped: {postflight_skipped_reason}", flush=True)
+
         return exit_code
     finally:
         if args.summary_out:
@@ -586,6 +630,8 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed_s=time.monotonic() - t0,
                 preflight_payload=preflight_payload,
                 preflight_skipped_reason=preflight_skipped_reason,
+                postflight_payload=postflight_payload,
+                postflight_skipped_reason=postflight_skipped_reason,
             )
 
 
