@@ -1,0 +1,12 @@
+# Local-only env files — keys for NDO ops, DO Spaces, FHS API, etc.
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# macOS
+.DS_Store

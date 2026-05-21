@@ -14,6 +14,11 @@
       "name": "foodhealthco-db-connect",
       "source": "./plugins/foodhealthco-db-connect",
       "description": "Connect to NDO Postgres (DigitalOcean) and HeroDB (GCP Cloud SQL) from a local machine."
+    },
+    {
+      "name": "foodhealthco-ndo-ops",
+      "source": "./plugins/foodhealthco-ndo-ops",
+      "description": "Run nutrition-data-ops scoring/tagging/ingestion management commands (19 wrapped) with CSV upload, preflight read-outs, and prod opt-in."
     }
   ]
 }

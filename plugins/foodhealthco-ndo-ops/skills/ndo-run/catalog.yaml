@@ -1,0 +1,224 @@
+# Command catalog for the ndo-run skill.
+#
+# Each entry describes a nutrition-data-ops `manage.py <name>` command:
+#   - `input`  : how product input is accepted (file, source, vendor, or none)
+#   - `args`   : supported CLI args passed through to manage.py
+#   - `sync_flag` : long form of the sync flag (--sync or -sy); null if no sync option
+#   - `csv_schema` : expected CSV columns when input=file
+#   - `notes`  : anything non-obvious a caller should know
+#
+# Conventions:
+#   - id_columns: the first column that matches one of these is treated as the product identifier:
+#       product_id, id, product_match_id, gtin, upc, int_upc, int_gtin
+#   - sync default: all commands that accept --sync/-sy default to async (Celery). The ndo-run
+#     skill forces --sync true so we don't depend on a remote worker picking up queued tasks.
+
+scoring:
+  backfill_fhs:
+    help: Score products with FHS
+    input: file_or_source  # either -f OR -s; if both given, -f wins
+    args: [-s, --source, -f, --file, --sync, -b, --batch]
+    sync_flag: --sync
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: Default batch=250. Runs via ScoringJob which calls the FHS API.
+
+  backfill_fhs_and_refresh_view_command:
+    help: Score products AND refresh index materialized views
+    input: source  # source-only, no CSV
+    args: [-s, --sources, -sy, --sync]
+    sync_flag: -sy
+    notes: |
+      Takes a list of sources via `-s foo bar baz` (nargs='+'). No file input.
+      After scoring, refreshes fhs_values_with_attr_for_index_mat_view. Use this
+      when new profiles land for a whole source.
+
+  refresh_fhs_view_for_index_command:
+    help: Refresh fhs_values_with_attr_for_index_mat_view (no scoring)
+    input: none  # no input
+    args: [-sy, --sync]
+    sync_flag: -sy
+    notes: |
+      Pairs with `backfill_fhs` (file-input scoring) — the chain orchestrator
+      runs this after `backfill_fhs` for product_ids/csv-driven runs.
+      `backfill_fhs_and_refresh_view_command` already refreshes, so don't pair
+      with that one.
+
+  index_scored_view_command:
+    help: Reindex OpenSearch from the refreshed approved-scores view
+    input: none
+    args: [-sy, --sync]
+    sync_flag: -sy
+    notes: |
+      Runs after `refresh_fhs_view_for_index_command` to rebuild the OpenSearch
+      index from the freshly-refreshed materialized view. Read-only over the
+      Postgres side; writes to OpenSearch.
+
+  backfill_detailed_fhs_norms:
+    help: Backfill detailed FHS norm values for specific products
+    input: file  # -f required
+    args: [-f, --file, --sync]
+    sync_flag: --sync
+    csv_schema:
+      id_columns: [product_id, id, product_match_id]  # stricter than backfill_fhs
+    notes: -f is REQUIRED. CSV must contain product_id, id, OR product_match_id.
+
+tagging:
+  text2tag_qa:
+    help: Run Text2Tag QA over a CSV; writes a new tagged CSV back to Spaces
+    input: file
+    file_flag: -i  # NDO command uses -i not -f for the input CSV
+    args: [-i, --input_file, -o, --output_key, -t, --tagging_file, -d, --is_detailed]
+    sync_flag: null
+    csv_schema:
+      required_columns: [ingredients_text, product_name]
+    notes: |
+      Different shape from `backfill_tags`: works on an arbitrary CSV (no DB
+      changes) and writes the tagged output back to Spaces. Required passthrough
+      `-- -o <output_key>`. Optional `-- -t <tagging_config_key> -d True` for
+      detailed mode. Per-row CSV must have `ingredients_text` and `product_name`.
+      The runner's `--csv`/`--ids`/`--spaces-key` populates `-i` (override via
+      `file_flag` field above).
+
+  backfill_tags:
+    help: Apply AI tagging (Text2Tag) to products
+    input: file_or_source
+    args: [-s, --source, -f, --file, -sy, --sync]
+    sync_flag: -sy
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: batch_size fixed at 300. Overwrites existing tags.
+
+  backfill_categories:
+    help: Categorize products via BentoML swap model
+    input: file_or_source
+    args: [-s, --source, -f, --file, --sync, -bs, --batch_size, -o, --overwrite]
+    sync_flag: --sync
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: Default batch_size=128. `-o true` overwrites existing categories.
+
+backfills:
+  backfill_imputation:
+    help: Impute missing calories, fat, protein, carbs, added sugars
+    input: file_or_source
+    args: [-s, --source, -f, --file, --sync]
+    sync_flag: --sync
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+
+  backfill_ni_profiles:
+    help: Copy CSV fields onto ProductMatch records (field-based copy)
+    input: file  # -f required (effectively)
+    args: [-f, --file, -if, --include_fields, -ef, --exclude_fields, -t, --target_column]
+    sync_flag: null  # no --sync on this command
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: |
+      `-t` selects which CSV column is the product identifier. If omitted, uses first column.
+      `-if` limits copy to a subset of columns; `-ef` excludes columns from copy.
+
+  backfill_proxy_match:
+    help: Copy proxy-match relationships from CSV
+    input: file
+    args: [-f, --file, -t, --target_column]
+    sync_flag: null
+    csv_schema:
+      required_columns: [copy_from_id]
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: CSV MUST include a `copy_from_id` column alongside the product identifier.
+
+ingestion:
+  create_products:
+    help: Create IPM rows from a source's foringestion-resolved input; optionally waterfall-match
+    input: source
+    args: [-s, --sources, -l, --limit, -m, --match]
+    sync_flag: null  # NDO command uses handle_async only; --sync not exposed
+    notes: |
+      `-s foo bar` picks one or more sources (nargs='+'). `-l 0` (default) means no
+      limit. `-m True` runs the waterfall match after creation. No `--sync` flag;
+      always async via Celery. Use as the programmatic alternative to a manual
+      INSERT into ingestion_productmatch.
+
+  match_products:
+    help: Retry waterfall matching (Nielsen / Nutritionix / USDA / scraped)
+    input: source  # source-only, no CSV
+    args: [-s, --sources, -l, --limit, --sync, -st, --stages, -as, --api_stages]
+    sync_flag: --sync
+    notes: |
+      No file input. `-s foo bar` picks sources (nargs='+'). `-l 500` limits batch size.
+      `-st` overrides stages list; `-as` filters by API match stage.
+
+  remove_products_and_scores:
+    help: Safely delete products + their scores (archived, not hard-deleted)
+    input: file
+    args: [-f, --file, -r, --reason_to_remove, -o, --operator_metadata]
+    sync_flag: null
+    csv_schema:
+      id_columns: [product_id, id]
+    notes: |
+      ALL THREE of -f, -r, -o are REQUIRED.
+      -r: free-text reason (audit log). -o: operator metadata (who/when context).
+      Destructive op — prefer dev target for dry runs first.
+      Narrower than `archive_table`: only archives IPM + their ASR/ScoringResult rows.
+
+  archive_table:
+    help: Generic archive of any table's rows by ID — IPM, FI, ASR, or ScoringResult
+    input: file
+    args: [-f, --file, -m, --model_name, -r, --reason_to_remove, -om, --operator_metadata, -ot, --operation_type]
+    sync_flag: null
+    csv_schema:
+      id_columns: [id]  # NDO command reads `row.get('id')` only; product_id is NOT accepted
+    notes: |
+      Per the [ops doc](https://docs.google.com/document/d/1pfuVryT1zDjiC-tyoE2XwOk_Wbj_OFPtQu_iljQqwGQ):
+      generalization of remove_products_and_scores. ALL of -f, -m, -r, -om, -ot are REQUIRED.
+        -m   model_name: `approvedscoringresult` | `foringestion` | `productmatch` | `scoringresult`
+        -ot  operation_type: `delete` | `update`
+        -r   free-text reason (audit log)
+        -om  operator metadata (e.g. `'Alex Pellas'`)
+      CSV must have `id` column (NOT `product_id`); --ids will be rejected by validation.
+      DESTRUCTIVE — always run on dev first.
+
+  generate_scores:
+    help: Export FHS values for all products of a vendor as an .xlsx
+    input: vendor  # no product IDs; takes a vendor_code and pulls internally
+    args: [-v, --vendor_code]
+    sync_flag: null
+    notes: |
+      Writes `ooh_fhs_for_{vendor_code}.xlsx` in the nutrition-data-ops working dir.
+      Does NOT take product IDs — ndo-run will prompt for vendor_code instead.
+
+scoring_review:
+  retrieve_data_cache:
+    help: Bridge ingestion_foringestion (FI) Pending rows into ingestion_productmatch (IPM)
+    input: none  # batch-driven, no per-product input
+    args: [-a, --amount]
+    sync_flag: null
+    notes: |
+      Pulls from FI table directly via DelegateProductsJob. Splits into match (no
+      nutrient data → waterfall) vs ingest (with nutrient data → direct IPM creation).
+      Default batch size 256 — pass `-a <N>` to process more in one run. NOT
+      source-filterable; processes whatever is Pending across all clients. Fix for
+      ENG-889 (duplicate IPM creation) lives in db/jobs/subtasks/create_product_match.py.
+
+  approve_scores:
+    help: Approve scores in bulk from a CSV
+    input: file
+    args: [-f, --file, -sy, --sync]
+    sync_flag: -sy
+    csv_schema:
+      required_columns: [fhs, product_id]
+    notes: |
+      CSV must have BOTH `fhs` and `product_id` columns (command raises otherwise).
+      batch_size fixed at 300.
+
+  send_to_clients:
+    help: Publish approved scores to clients
+    input: file
+    args: [-f, --file, -c, --client_id]
+    sync_flag: null
+    csv_schema:
+      id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
+    notes: |
+      -c is optional; if omitted, publishes to all clients matching the score rows.
+      No --sync flag: runs synchronously in-process.
