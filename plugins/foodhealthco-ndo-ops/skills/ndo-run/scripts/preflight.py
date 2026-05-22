@@ -827,6 +827,97 @@ def preflight_approve_scores(conn, ids: list[int], args=None, spec=None) -> Pref
     )
 
 
+def preflight_bulk_create_products(conn, ids, args=None, spec=None) -> PreflightReport:
+    """Bucket CSV rows by (gtin, source) existence in IPM.
+
+    `bulk_create_products` is a CREATE flow, so there are no integer
+    product_ids to extract — the impl reads the CSV's `gtin` column directly
+    and joins against `(gtin, source)` in IPM. The runner skips the standard
+    int-id extractor for commands listed in `PREFLIGHT_SKIPS_ID_EXTRACTION`.
+    """
+    source = getattr(args, "source", None)
+    if not source:
+        return PreflightReport(
+            command="bulk_create_products",
+            target="",
+            input_count=0,
+            buckets=[],
+            notes=["preflight: --source is required for bulk_create_products"],
+        )
+
+    local_path = Path(args.csv).expanduser().resolve()
+    gtins_in_csv: list[str] = []
+    rows_without_gtin = 0
+    seen: set[str] = set()
+    duplicate_in_csv = 0
+
+    try:
+        with open(local_path) as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames or "gtin" not in reader.fieldnames:
+                return PreflightReport(
+                    command="bulk_create_products",
+                    target="",
+                    input_count=0,
+                    buckets=[],
+                    notes=["preflight: CSV missing `gtin` column"],
+                )
+            for row in reader:
+                raw = (row.get("gtin") or "").strip()
+                if not raw:
+                    rows_without_gtin += 1
+                    continue
+                if raw in seen:
+                    duplicate_in_csv += 1
+                    continue
+                seen.add(raw)
+                gtins_in_csv.append(raw)
+    except OSError as e:
+        return PreflightReport(
+            command="bulk_create_products",
+            target="",
+            input_count=0,
+            buckets=[],
+            notes=[f"preflight: failed to read CSV: {e}"],
+        )
+
+    will_create = 0
+    already_in_source = 0
+    if gtins_in_csv:
+        row = _fetchone_dict(
+            conn,
+            """
+                WITH input(gtin) AS (SELECT unnest(%s::text[]))
+                SELECT
+                    COUNT(*) FILTER (WHERE pm.gtin IS NULL) AS will_create,
+                    COUNT(*) FILTER (WHERE pm.gtin IS NOT NULL) AS already_in_source
+                FROM input
+                LEFT JOIN ingestion_productmatch pm
+                  ON pm.gtin = input.gtin AND pm.source = %s
+            """,
+            (gtins_in_csv, source),
+        )
+        will_create = row["will_create"]
+        already_in_source = row["already_in_source"]
+
+    return PreflightReport(
+        command="bulk_create_products",
+        target="",
+        input_count=len(gtins_in_csv) + rows_without_gtin + duplicate_in_csv,
+        buckets=[
+            Bucket("Will create new IPM rows", will_create, "update",
+                   f"source={source}, api_match_stage=manual_review"),
+            Bucket(f"Skip: gtin+source already in IPM ({source})",
+                   already_in_source, "skip",
+                   "idempotent — rerunning is safe"),
+            Bucket("Skip: duplicate gtin within CSV",
+                   duplicate_in_csv, "skip"),
+            Bucket("Block: row missing gtin", rows_without_gtin, "block",
+                   "every row needs a gtin (synthetic prefix OK)"),
+        ],
+    )
+
+
 def preflight_send_to_clients(conn, ids: list[int], args=None, spec=None) -> PreflightReport:
     """Publishing requires an ApprovedScoringResult."""
     row = _fetchone_dict(
@@ -882,6 +973,15 @@ PREFLIGHT_REGISTRY: dict[str, Callable[..., PreflightReport]] = {
     "archive_table": preflight_archive_table,
     "approve_scores": preflight_approve_scores,
     "send_to_clients": preflight_send_to_clients,
+    "bulk_create_products": preflight_bulk_create_products,
+}
+
+
+# Creation-style commands skip the standard integer-id extractor (no IPM ids
+# exist yet) and read the CSV themselves. Their impls receive an empty `ids`
+# argument; `run_preflight` validates that a local CSV is present first.
+PREFLIGHT_SKIPS_ID_EXTRACTION: set[str] = {
+    "bulk_create_products",
 }
 
 
@@ -907,9 +1007,20 @@ def run_preflight(
     if not impl:
         return None, f"no preflight implementation for `{args.command}` yet"
 
-    ids, reason = extract_ids_for_preflight(args, spec)
-    if not ids:
-        return None, reason
+    if args.command in PREFLIGHT_SKIPS_ID_EXTRACTION:
+        # CREATE flows: the impl reads the CSV itself; just make sure one is
+        # available locally before opening a DB connection.
+        if args.spaces_key:
+            return None, "preflight skipped for --spaces-key (would require Spaces fetch)"
+        if not args.csv:
+            return None, "preflight: no CSV provided"
+        if not Path(args.csv).expanduser().resolve().exists():
+            return None, f"preflight: {args.csv} does not exist"
+        ids: list = []
+    else:
+        ids, reason = extract_ids_for_preflight(args, spec)
+        if not ids:
+            return None, reason
 
     try:
         with open_connection(ndo_env) as conn:

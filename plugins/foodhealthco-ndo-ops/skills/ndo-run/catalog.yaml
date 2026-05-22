@@ -140,6 +140,34 @@ ingestion:
       always async via Celery. Use as the programmatic alternative to a manual
       INSERT into ingestion_productmatch.
 
+  bulk_create_products:
+    help: Create IPM rows from a CSV upload (vendor batch ingestion)
+    input: file  # -f required; --source also required (runner forwards because -s is in args)
+    args: [-f, --file, -s, --source, -m, --match]
+    sync_flag: null
+    csv_schema:
+      required_columns: [product_name, brand_name, gtin]
+      id_columns: [gtin]
+    notes: |
+      Replaces the manual `INSERT INTO ingestion_productmatch ...` workflow used
+      for vendor batches like CLI-855 (Tyson). `-s <source>` is REQUIRED and is
+      applied to every created row (e.g. `tyson_20260521`). Every row must carry
+      a `gtin` — for vendors without a real UPC, use a synthetic prefix
+      (`tyson10000019592`-style) so the column is non-empty.
+
+      Idempotent on `(gtin, source)`: rerunning on the same CSV skips
+      already-present rows with a logged warning. `sku` is optional but
+      recommended. Any other CSV column whose name matches a ProductMatch
+      model field (`AbstractNutritionProfile` macros, `is_*` taggable booleans,
+      `ingredients_text`, `product_category`, `serving_*`, etc.) is copied onto
+      the row; everything else is ignored. `original_product_name`/
+      `original_brand_name` default to their non-original counterparts, and
+      `ingredients` mirrors `ingredients_text` when only the text was supplied.
+      Every created row is stamped with `api_match_stage='manual_review'`.
+
+      `-m True` triggers `match_products --sources <source> --sync true` after
+      the inserts so newly-created rows immediately go through the waterfall.
+
   match_products:
     help: Retry waterfall matching (Nielsen / Nutritionix / USDA / scraped)
     input: source  # source-only, no CSV
