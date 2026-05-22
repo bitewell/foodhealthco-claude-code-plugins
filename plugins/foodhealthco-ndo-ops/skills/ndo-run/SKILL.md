@@ -36,11 +36,15 @@ If the user's intent is ambiguous, ask them to clarify before running anything.
 
 ## How to invoke
 
-Always use the runner script — do NOT shell out to `manage.py` directly:
+Always use the runner script — do NOT shell out to `manage.py` directly. The runner expects to run inside the `meltano-elt-pipelines` Poetry env so it can import `meltano_helpers.read_csv` and friends:
 
 ```bash
-python .claude/skills/ndo-run/scripts/ndo_run.py <command> [options]
+cd /Users/alexpellas/Code/meltano-elt-pipelines
+poetry run -- python /path/to/plugins/foodhealthco-ndo-ops/skills/ndo-run/scripts/ndo_run.py \
+  <command> [options]
 ```
+
+**Important — note the `--` between `poetry run` and `python`.** Poetry 2.x argument-parses everything between `poetry run` and the script name, so it will grab `--csv` / `--ids` and error out with `The option "--csv" does not exist`. The literal `--` tells Poetry to stop parsing and treat the rest as the command line. Without it, any command that takes a `--csv` or `--ids` arg (which is most of them) will fail before the runner even starts.
 
 The runner handles: reading `.env`, building/uploading the CSV, translating env var names for NDO, streaming output, and safety gates (prod confirmation, HeroDB warning).
 
@@ -96,30 +100,32 @@ Today (v0) `backfill_categories` has a preflight impl; other commands report "no
 
 ## Examples
 
+All examples below assume `cd /Users/alexpellas/Code/meltano-elt-pipelines` first. Note the `poetry run --` (with the literal `--`) — this is required so Poetry doesn't grab `--csv`/`--ids` before the runner sees them.
+
 ```bash
 # FHS backfill on 3 pasted IDs, dev target, dry-run first
-python .claude/skills/ndo-run/scripts/ndo_run.py backfill_fhs \
+poetry run -- python /path/to/ndo_run.py backfill_fhs \
   --ids 12345,67890,11111 --target dev --dry-run
 
 # For real
-python .claude/skills/ndo-run/scripts/ndo_run.py backfill_fhs \
+poetry run -- python /path/to/ndo_run.py backfill_fhs \
   --ids 12345,67890,11111 --target dev
 
 # Tag all products from a source (no CSV needed — source drives selection)
-python .claude/skills/ndo-run/scripts/ndo_run.py backfill_tags \
+poetry run -- python /path/to/ndo_run.py backfill_tags \
   --source nielsen --target dev
 
 # Approve scores from a local CSV (validates fhs + product_id columns)
-python .claude/skills/ndo-run/scripts/ndo_run.py approve_scores \
+poetry run -- python /path/to/ndo_run.py approve_scores \
   --csv /tmp/approvals.csv --target prod
 
 # Safe-delete with required reason + operator metadata (via passthrough)
-python .claude/skills/ndo-run/scripts/ndo_run.py remove_products_and_scores \
+poetry run -- python /path/to/ndo_run.py remove_products_and_scores \
   --csv /tmp/obsolete.csv --target prod \
   -- -r "duplicate of canonical source" -o "alex@bitewell 2026-04-24"
 
 # Waterfall re-match a source with a specific stage
-python .claude/skills/ndo-run/scripts/ndo_run.py match_products \
+poetry run -- python /path/to/ndo_run.py match_products \
   --source hyvee --target dev \
   -- -l 500 -st nielsen_exact_match
 ```
