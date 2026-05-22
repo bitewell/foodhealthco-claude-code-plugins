@@ -128,8 +128,8 @@ python .claude/skills/ndo-run/scripts/ndo_run.py match_products \
 
 Before the first run in a session:
 
-- Confirm `nutrition-data-ops/` is a sibling of `meltano-elt-pipelines/` (runner checks and exits with a clone hint if missing).
-- Confirm `meltano-elt-pipelines/.env` has `NDO_DEV_DATABASE_URL`, `NDO_PROD_DATABASE_URL`, `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY`, `FHS_API_URL`, `FHS_API_TOKEN`. The runner will fail loudly if any are missing.
+- Confirm `nutrition-data-ops/` is checked out (runner discovers it via `$NDO_ROOT`, walk-up from CWD, or `~/Code/nutrition-data-ops`; exits with a clone hint if missing).
+- Confirm the `.env` (plugins-repo, NDO checkout, or `~/.config/ndo-run/.env` — see `discover_env_file` for the chain) has `NDO_DEV_DATABASE_URL`, `NDO_PROD_DATABASE_URL`, `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY`, `FHS_API_URL`, `FHS_API_TOKEN`. The runner will fail loudly if any are missing.
 
 ## Programmatic invocation (Dagster)
 

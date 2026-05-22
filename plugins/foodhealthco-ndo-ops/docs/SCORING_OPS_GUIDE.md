@@ -21,29 +21,25 @@ Do this once on your laptop. Roughly 15–30 minutes the first time. Ask an engi
 
 Download from <https://claude.com/claude-code>. Sign in with your foodhealth.co account.
 
-### 2. Clone the two repos as siblings
+### 2. Clone the nutrition-data-ops repo
 
 In a terminal:
 
 ```bash
 mkdir -p ~/Code
 cd ~/Code
-git clone git@github.com:bitewell/meltano-elt-pipelines.git
 git clone git@github.com:bitewell/nutrition-data-ops.git
 ```
 
 > If `git clone` fails with a permissions error: ask eng to add you to the bitewell GitHub org and set up an SSH key (one-time, ~5 min).
 
-### 3. Install Python deps for both repos
+### 3. Install Python deps
 
 The plugin shells out to NDO's `manage.py`, which needs its own poetry env:
 
 ```bash
 # Install poetry once if you don't have it:
 curl -sSL https://install.python-poetry.org | python3 -
-
-cd ~/Code/meltano-elt-pipelines
-poetry install
 
 cd ~/Code/nutrition-data-ops
 poetry install
