@@ -40,6 +40,21 @@ Confirm preflight prints the bucket read-out. If it errors, fix `.env` per the [
 - The 5 IPM IDs from your dummy data — copy-paste ready
 - Claude Code session, started, plugin enabled
 
+### 4. Env-var prereqs (caught during a real rehearsal — don't skip)
+
+These env vars must be in your `.env` (recommend the plugins-repo `.env` since it's first in the discovery chain). Otherwise specific phases silently no-op or crash mid-run:
+
+| Env var | Required for | Symptom if missing |
+|---|---|---|
+| `NDO_DEV_DATABASE_URL` | All NDO phases | runner errors out at startup |
+| `DO_SPACES_ACCESS_KEY` + `DO_SPACES_SECRET_KEY` (must have **`btw-nutrition` write**) | Phases that upload CSV (4, 7 in `--ids` mode, 9, 10, 11, 12, 13) | `InvalidAccessKeyId` on upload — `backfills-test`-scoped keys silently fail |
+| `DEFAULT_TAGGING_FILE=t2t_v4.csv` | Phase 4 (Tag) — match production rules | Phase 4 logs "Tagging will run with NO RULES" and applies no tags |
+| `CATEGORY_ENDPOINT_URL` (+ TOKEN if BentoML auth is on) | Phase 6 (Categorize) | `Invalid URL 'predict': No scheme supplied` — categorization no-ops |
+| `FHS_API_URL` + `FHS_API_TOKEN` | Phase 7 (Score), Phase 10 (Re-score) | scoring fails to call the API |
+| `FHSAPI_API_TOKEN` (note: **second** API namespace) | Phase 12 (Send to client) | `ValueError: Token cannot be empty` |
+
+Also: dev DB needs the latest migrations applied. As of the May 2026 release that's `0092_productmatch_foringestion`. Without it, any phase reading via Django ORM fails with `column ingestion_productmatch.foringestion_id does not exist`. Apply via `poetry run python manage.py migrate` from `nutrition-data-ops/` with `DATABASE_URL=$NDO_DEV_DATABASE_URL`.
+
 ---
 
 ## 5-min intro
@@ -66,13 +81,13 @@ Follow a single dummy product (e.g. Product #3) all the way through. Mention the
 | 4 | **Tag** | "Run backfill_tags on source demo_X against dev" | `backfill_tags` | First preflight read-out — explain the buckets. `is_deep_fried` fires for Product #2 |
 | 5 | **Impute** | "Run backfill_imputation on source demo_X" | `backfill_imputation` | Preflight: "Will impute: 1, Already complete: 4" — the missing-protein row gets filled |
 | 6 | **Categorize** | "Run backfill_categories on source demo_X" | `backfill_categories` | Preflight: "Will categorize: 1, Already categorized: 4" — only Product #2 hits BentoML |
-| 7 | **Score** | "Run backfill_fhs on source demo_X" | `backfill_fhs` | Preflight surfaces `✗ Missing macros` block bucket on Product #4 — that one **won't** score. **Failure is loud and prevented upfront, not silent.** This is the headline feature |
+| 7 | **Score** | "Run backfill_fhs **--ids 1,2,3,4,5** against dev" *(NOT --source — preflight only fires with --ids/--csv input)* | `backfill_fhs --ids ...` | Preflight surfaces `✗ Missing macros` bucket on Product #4 — that one's score will be **unreliable** because the FHS API tolerates NULL macros but produces a meaningless number. **Preflight warns operators upfront so they can investigate before approving.** This is the headline feature — visibility before writes. |
 | 8 | **Score report** | "Generate the QA xlsx for source demo_X from those 5 IDs" | `generate_qa_report --ids 1,2,3,4,5 --source demo_X` (shells out to `fhs-app/generate_scores.py`, output xlsx lands in `fhs-app/output_scores/`) | "Same skill interface, different tool underneath. Postflight reports how many xlsx files landed — 0 means fhs-app failed silently. The xlsx is what RD reviews." |
 | 9 | **Backfill** (after RD review) | "RD flagged Product #5's tag. I edited the source CSV — re-apply with backfill_ni_profiles" | `backfill_ni_profiles --csv corrections.csv --target dev -- -if is_deep_fried` | Shows the round-trip: dietitian edits → CSV → DB. Preflight confirms the update. |
 | 10 | **Re-score** | "Re-run backfill_fhs on the edited IDs" | `backfill_fhs --ids ...` | Postflight verifies new scoring result rows landed for the corrected products |
 | 11 | **Approve** | "Approve scores against dev — here's the CSV with product_id, fhs" | `approve_scores --csv approvals.csv` | Preflight cross-checks each row's `fhs` against the stored `ScoringResult.fhs`. Show **one matching + one intentionally mismatched** row — narrate the rejection |
 | 12 | **Send to client** | "Send to clients for those IDs with client_id=demo_client" | `send_to_clients -- -c demo_client` | Mention this hits external publishers in prod; on dev it's a no-op against a fake client. Postflight verifies `published` flag flipped |
-| 13 | **Archive** | "Archive the demo products via archive_table -m productmatch" | `archive_table -- -m productmatch -r 'demo cleanup' -om 'alex' -ot delete` | Cleans up after the demo. Show preflight bucketing on `entity_archive`. `-m approvedscoringresult` archives only scores; `-m productmatch` archives the IPM row |
+| 13 | **Archive** | "Clean up the demo with `remove_products_and_scores`" *(cascades to SR + ASR)* | `remove_products_and_scores --csv ids.csv -- -r 'demo cleanup' -o 'alex'` | **Cleans up IPM + SR + ASR in one call.** Alternative: 3× `archive_table` calls (`-m approvedscoringresult` → `-m scoringresult` → `-m productmatch`) in that order. Do NOT use `archive_table -m productmatch` alone — it leaves SR + ASR orphans pointing at deleted IPM ids (verified during the rehearsal). |
 
 ---
 
