@@ -356,9 +356,18 @@ def build_manage_cmd(
         file_flag = spec.get("file_flag", "-f")
         cmd.extend([file_flag, spaces_key])
 
-    if args.source and spec.get("input") in ("source", "file_or_source"):
-        source_flag = "-s"
-        cmd.extend([source_flag, args.source])
+    # Forward --source either when the input mode implies it (source-only or
+    # file_or_source), or when an `input: file` command explicitly declares a
+    # singular --source in its catalog args (e.g. `bulk_create_products`, which
+    # stamps every created row with a source). Plural `--sources` (nargs='+')
+    # also accepts a single value, so this stays safe for those callers.
+    source_in_spec_args = any(
+        a in spec.get("args", []) for a in ("-s", "--source")
+    )
+    if args.source and (
+        spec.get("input") in ("source", "file_or_source") or source_in_spec_args
+    ):
+        cmd.extend(["-s", args.source])
 
     sync_flag = spec.get("sync_flag")
     if sync_flag and args.sync is not None:
@@ -497,6 +506,8 @@ def write_summary(
     elapsed_s: float,
     preflight_payload: dict | None = None,
     preflight_skipped_reason: str | None = None,
+    postflight_payload: dict | None = None,
+    postflight_skipped_reason: str | None = None,
 ) -> None:
     """Write a JSON run-summary file (best-effort; never raises)."""
     payload = {
@@ -514,6 +525,8 @@ def write_summary(
         "dry_run": bool(args.dry_run),
         "preflight": preflight_payload,
         "preflight_skipped_reason": preflight_skipped_reason,
+        "postflight": postflight_payload,
+        "postflight_skipped_reason": postflight_skipped_reason,
     }
     try:
         with open(path, "w") as f:
@@ -532,6 +545,8 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 1  # pessimistic default in case we exit before run()
     preflight_payload: dict | None = None
     preflight_skipped_reason: str | None = None
+    postflight_payload: dict | None = None
+    postflight_skipped_reason: str | None = None
 
     try:
         if NDO_ROOT is None or not NDO_ROOT.exists():
@@ -573,6 +588,22 @@ def main(argv: list[str] | None = None) -> int:
         spaces_key, input_count = resolve_input(args, spec)
         cmd = build_manage_cmd(args, spec, spaces_key)
         exit_code = run(cmd, ndo_env, args.dry_run)
+
+        # Post-flight: measure what landed and compare against the preflight
+        # forecast. Surfaces silent drops (rows skipped at runtime that
+        # preflight didn't predict). Runs only when an impl exists for the
+        # command; see postflight.POSTFLIGHT_REGISTRY.
+        from postflight import run_postflight  # local import
+
+        post_report, postflight_skipped_reason = run_postflight(
+            args, spec, ndo_env, started_at, preflight_payload, exit_code
+        )
+        if post_report is not None:
+            postflight_payload = post_report.to_dict()
+            print(post_report.format(), flush=True)
+        elif postflight_skipped_reason and not args.dry_run:
+            print(f"[postflight] skipped: {postflight_skipped_reason}", flush=True)
+
         return exit_code
     finally:
         if args.summary_out:
@@ -586,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed_s=time.monotonic() - t0,
                 preflight_payload=preflight_payload,
                 preflight_skipped_reason=preflight_skipped_reason,
+                postflight_payload=postflight_payload,
+                postflight_skipped_reason=postflight_skipped_reason,
             )
 
 
