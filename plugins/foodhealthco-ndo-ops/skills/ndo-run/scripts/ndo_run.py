@@ -581,11 +581,27 @@ def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple
     input_file, input_count = resolve_fhs_app_input(args, spec, fhs_app_root, source)
     relative_name = input_file.name  # fhs-app prepends "input_scores/" itself
 
-    cmd = ["poetry", "run", "python", "generate_scores.py", "-s", source, "-f", relative_name]
+    # `--directory` forces poetry to resolve against fhs-app's own pyproject.toml
+    # regardless of where the runner was invoked from. Without it, when the
+    # runner runs inside meltano-elt-pipelines's poetry env, the inherited
+    # POETRY_ACTIVE / VIRTUAL_ENV vars cause `poetry run` to reuse the meltano
+    # venv — which doesn't have xlsxwriter (an fhs-app-only dep).
+    cmd = [
+        "poetry", "--directory", str(fhs_app_root),
+        "run", "python", "generate_scores.py",
+        "-s", source, "-f", relative_name,
+    ]
     if args.extra:
         cmd.extend(args.extra)
 
-    exit_code = run(cmd, os.environ.copy(), args.dry_run, cwd=str(fhs_app_root))
+    # Strip env vars that pin poetry to the parent env. Otherwise --directory
+    # is honored for project resolution but poetry still sees an active venv
+    # and tries to reuse it.
+    fhs_app_env = os.environ.copy()
+    for leak in ("POETRY_ACTIVE", "VIRTUAL_ENV"):
+        fhs_app_env.pop(leak, None)
+
+    exit_code = run(cmd, fhs_app_env, args.dry_run, cwd=str(fhs_app_root))
 
     return exit_code, {
         "source": source,
