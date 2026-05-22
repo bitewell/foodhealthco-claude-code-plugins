@@ -87,6 +87,35 @@ def test_id_columns_are_canonical(catalog):
             )
 
 
+def test_tool_field_is_known(catalog):
+    """`tool` is optional; default is NDO `manage.py`. Only one alternative
+    is wired (fhs_app). New tools must teach the runner first."""
+    valid_tools = {None, "fhs_app"}
+    for name, spec in catalog.items():
+        tool = spec.get("tool")
+        assert tool in valid_tools, (
+            f"{name}: tool={tool!r} not in {valid_tools}. "
+            "Wire a new tool branch in ndo_run.main() before adding it here."
+        )
+
+
+def test_generate_qa_report_entry(catalog):
+    """The fhs-app QA report wrapper stays well-formed."""
+    assert "generate_qa_report" in catalog, "generate_qa_report entry is missing"
+    spec = catalog["generate_qa_report"]
+    assert spec["tool"] == "fhs_app", (
+        "generate_qa_report must carry tool: fhs_app so main() routes it "
+        "through the fhs-app branch (no NDO env, no Spaces upload)"
+    )
+    assert spec["input"] == "file"
+    assert spec["sync_flag"] is None
+    # fhs-app's -f flag is plural (--files, multiple) — must be in args so
+    # the SKILL.md routing table and any future help-text scraper pick it up.
+    assert "-f" in spec["args"]
+    schema = spec.get("csv_schema") or {}
+    assert "product_id" in (schema.get("id_columns") or [])
+
+
 def test_bulk_create_products_entry(catalog):
     """Specific guard: the new bulk_create_products entry stays well-formed."""
     assert "bulk_create_products" in catalog, "bulk_create_products entry is missing"

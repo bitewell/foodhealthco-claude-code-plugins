@@ -95,6 +95,25 @@ def discover_ndo_root() -> Optional[Path]:
     return fallback if fallback.is_dir() else None
 
 
+def discover_fhs_app_root() -> Optional[Path]:
+    """Find fhs-app via env var → sibling of meltano → walk-up → ~/Code heuristic.
+
+    Used only by catalog entries with `tool: fhs_app` (currently:
+    `generate_qa_report`). fhs-app uses its own poetry env and its own .env,
+    so we just need the path to `cd` into.
+    """
+    if env := os.environ.get("FHS_APP_ROOT"):
+        p = Path(env).expanduser().resolve()
+        return p if p.is_dir() else None
+    if (mr := discover_meltano_root()) and (mr.parent / "fhs-app").is_dir():
+        return mr.parent / "fhs-app"
+    for start in (Path.cwd(), SCRIPT_DIR):
+        if found := _find_dir_walking_up(start, "fhs-app"):
+            return found
+    fallback = Path.home() / "Code" / "fhs-app"
+    return fallback if fallback.is_dir() else None
+
+
 def discover_env_file() -> Optional[Path]:
     """Locate the .env to load. Discovery chain (first hit wins):
 
@@ -250,6 +269,33 @@ def validate_csv_schema(csv_path: Path, spec: dict) -> None:
             f"error: CSV {csv_path} has no recognized product id column. "
             f"Expected one of: {id_columns}. Header was: {header}"
         )
+
+
+def extract_ids_from_csv(csv_path: Path, spec: dict) -> list[str]:
+    """Return the values of the first id column found in the CSV.
+
+    Looks at `csv_schema.id_columns` (in declaration order) and picks the first
+    one that appears in the header. Empty cells are skipped. Used by fhs-app
+    commands which take a newline-separated txt file rather than a CSV, so
+    the runner extracts the id column and writes it back out as plain lines.
+    """
+    schema = spec.get("csv_schema") or {}
+    id_columns = schema.get("id_columns") or []
+    with open(csv_path) as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return []
+        header_idx = {col.strip(): i for i, col in enumerate(header)}
+        chosen = next((c for c in id_columns if c in header_idx), None)
+        if chosen is None:
+            sys.exit(
+                f"error: {csv_path} has no recognized id column. "
+                f"Expected one of: {id_columns}. Header was: {header}"
+            )
+        idx = header_idx[chosen]
+        return [row[idx].strip() for row in reader if len(row) > idx and row[idx].strip()]
 
 
 def count_csv_rows(csv_path: Path) -> int | None:
@@ -416,8 +462,8 @@ def warn_herodb(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
-def run(cmd: list[str], env: dict[str, str], dry_run: bool) -> int:
-    cwd = str(NDO_ROOT)
+def run(cmd: list[str], env: dict[str, str], dry_run: bool, cwd: Optional[str] = None) -> int:
+    cwd = cwd or str(NDO_ROOT)
     pretty = " ".join(shlex.quote(c) for c in cmd)
     print(f"\n$ (cd {cwd} && {pretty})\n")
     if dry_run:
@@ -437,6 +483,116 @@ def run(cmd: list[str], env: dict[str, str], dry_run: bool) -> int:
         sys.stdout.write(line)
         sys.stdout.flush()
     return proc.wait()
+
+
+# ---------------------------------------------------------------------------
+# fhs-app shell-out (separate path from NDO `manage.py`)
+# ---------------------------------------------------------------------------
+# Catalog entries with `tool: fhs_app` follow a simpler flow than the NDO
+# default: no Spaces upload (fhs-app reads files from its local input_scores/
+# directory), no NDO env var translation (fhs-app reads its own .env), no
+# preflight (no SQL inspection available — fhs-app calls the FHS API
+# directly). Postflight is still wired via POSTFLIGHT_REGISTRY.
+
+
+def write_fhs_app_input_file(ids: list[str], fhs_app_root: Path, source: str) -> Path:
+    """Write IDs to a newline-separated .txt in fhs-app/input_scores/.
+
+    fhs-app's generate_scores.py reads file paths from input_scores/ (one
+    product id per line). The filename includes a timestamp + source so
+    repeated runs don't clobber each other and operators can reproduce later.
+    """
+    input_dir = fhs_app_root / "input_scores"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = input_dir / f"ops_skill_{source}_{stamp}.txt"
+    with open(path, "w") as f:
+        for pid in ids:
+            f.write(f"{pid}\n")
+    return path
+
+
+def resolve_fhs_app_input(args: argparse.Namespace, spec: dict, fhs_app_root: Path, source: str) -> tuple[Path, int]:
+    """Return (input_file_path_relative_to_input_scores, id_count).
+
+    fhs-app's `-f` is interpreted relative to its `input_scores/` directory
+    (see get_full_path() in fhs-app/generate_scores.py). The runner accepts
+    --ids or --csv and writes a sidecar .txt, returning the bare filename.
+    """
+    if args.spaces_key:
+        sys.exit("error: --spaces-key is not supported for fhs-app commands")
+    if not (args.ids or args.csv):
+        sys.exit(
+            f"error: `{args.command}` requires --ids or --csv "
+            "(a list of product ids to score)"
+        )
+    if args.ids and args.csv:
+        sys.exit("error: pass only one of --ids, --csv")
+
+    if args.csv:
+        local_path = Path(args.csv).expanduser().resolve()
+        if not local_path.exists():
+            sys.exit(f"error: {local_path} does not exist")
+        validate_csv_schema(local_path, spec)
+        ids = extract_ids_from_csv(local_path, spec)
+    else:
+        ids = [i.strip() for i in args.ids.split(",") if i.strip()]
+        if not ids:
+            sys.exit("error: --ids produced no values after parsing")
+
+    if not ids:
+        sys.exit("error: no product ids resolved from input")
+
+    if args.dry_run:
+        # Don't pollute fhs-app/input_scores/ on a dry-run. Synthesize the
+        # would-be path so the printed shell-out is realistic.
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dry_path = fhs_app_root / "input_scores" / f"ops_skill_{source}_{stamp}.txt"
+        print(
+            f"[dry-run] would write {len(ids)} ids to {dry_path} "
+            f"(first 3: {ids[:3]})"
+        )
+        return dry_path, len(ids)
+
+    out = write_fhs_app_input_file(ids, fhs_app_root, source)
+    return out, len(ids)
+
+
+def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple[int, dict]:
+    """Run an fhs-app shell-out command. Returns (exit_code, run_meta).
+
+    run_meta carries postflight-relevant fields (source, input_count,
+    input_file) so the caller can build the summary JSON.
+    """
+    fhs_app_root = discover_fhs_app_root()
+    if fhs_app_root is None or not fhs_app_root.exists():
+        sys.exit(
+            "error: fhs-app checkout not found.\n"
+            "Searched: $FHS_APP_ROOT, sibling of meltano-elt-pipelines, walk-up from CWD, ~/Code/fhs-app.\n"
+            "Clone it: git clone git@github.com:foodhealthco/fhs-app.git ~/Code/fhs-app\n"
+            "Or set: FHS_APP_ROOT=/path/to/fhs-app"
+        )
+
+    # fhs-app's generate_scores.py defaults to source="wkbk_1" if -s is
+    # omitted; we mirror that default so the postflight scan knows which
+    # filename prefix to look for.
+    source = args.source or "wkbk_1"
+
+    input_file, input_count = resolve_fhs_app_input(args, spec, fhs_app_root, source)
+    relative_name = input_file.name  # fhs-app prepends "input_scores/" itself
+
+    cmd = ["poetry", "run", "python", "generate_scores.py", "-s", source, "-f", relative_name]
+    if args.extra:
+        cmd.extend(args.extra)
+
+    exit_code = run(cmd, os.environ.copy(), args.dry_run, cwd=str(fhs_app_root))
+
+    return exit_code, {
+        "source": source,
+        "input_count": input_count,
+        "input_file": str(input_file),
+        "fhs_app_root": str(fhs_app_root),
+    }
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -549,14 +705,6 @@ def main(argv: list[str] | None = None) -> int:
     postflight_skipped_reason: str | None = None
 
     try:
-        if NDO_ROOT is None or not NDO_ROOT.exists():
-            sys.exit(
-                f"error: nutrition-data-ops checkout not found.\n"
-                "Searched: $NDO_ROOT, sibling of meltano-elt-pipelines, walk-up from CWD, ~/Code/nutrition-data-ops.\n"
-                "Clone it: git clone git@github.com:foodhealthco/nutrition-data-ops.git\n"
-                "Or set: NDO_ROOT=/path/to/nutrition-data-ops"
-            )
-
         catalog = load_catalog()
         if args.command not in catalog:
             sys.exit(
@@ -564,6 +712,35 @@ def main(argv: list[str] | None = None) -> int:
                 f"Known commands: {sorted(catalog.keys())}"
             )
         spec = catalog[args.command]
+
+        # fhs-app commands take a separate path: no NDO checkout, no Spaces
+        # upload, no preflight, no env translation. Postflight still runs but
+        # scans the filesystem rather than opening a DB connection.
+        if spec.get("tool") == "fhs_app":
+            exit_code, run_meta = main_fhs_app(args, spec, started_at)
+            input_count = run_meta["input_count"]
+            spaces_key = None  # fhs-app doesn't use Spaces
+
+            from postflight import run_fhs_app_postflight  # local import
+
+            post_report, postflight_skipped_reason = run_fhs_app_postflight(
+                args, spec, run_meta, started_at, exit_code
+            )
+            if post_report is not None:
+                postflight_payload = post_report.to_dict()
+                print(post_report.format(), flush=True)
+            elif postflight_skipped_reason and not args.dry_run:
+                print(f"[postflight] skipped: {postflight_skipped_reason}", flush=True)
+
+            return exit_code
+
+        if NDO_ROOT is None or not NDO_ROOT.exists():
+            sys.exit(
+                f"error: nutrition-data-ops checkout not found.\n"
+                "Searched: $NDO_ROOT, sibling of meltano-elt-pipelines, walk-up from CWD, ~/Code/nutrition-data-ops.\n"
+                "Clone it: git clone git@github.com:foodhealthco/nutrition-data-ops.git\n"
+                "Or set: NDO_ROOT=/path/to/nutrition-data-ops"
+            )
 
         warn_herodb(args)
         confirm_prod(args, spec)

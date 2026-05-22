@@ -54,6 +54,34 @@ scoring:
       index from the freshly-refreshed materialized view. Read-only over the
       Postgres side; writes to OpenSearch.
 
+  generate_qa_report:
+    help: Generate FHS scoring QA xlsx for a set of products (scored + unscorable buckets) via fhs-app
+    tool: fhs_app  # shells out to fhs-app/generate_scores.py, NOT NDO manage.py
+    input: file
+    args: [-f, --files, -s, --source]
+    sync_flag: null
+    csv_schema:
+      id_columns: [product_id, id, product_match_id]
+    notes: |
+      Wraps fhs-app/generate_scores.py — the comprehensive RD-facing QA xlsx
+      generator. NOT the same as NDO's `generate_scores`, which only exports
+      already-approved scores by vendor.
+
+      Output xlsx lands in `fhs-app/output_scores/`:
+        - <source>_all_scores_<YYYYMMDD>_part_<n>.xlsx
+        - <source>_unscorables_for_data_entry_<YYYYMMDD>_part_<n>.xlsx
+      Postflight reports how many of each landed (and 0 means fhs-app
+      failed silently — check the streamed output).
+
+      `--source` defaults to fhs-app's own default ("wkbk_1") if unset, but
+      pass it explicitly for demos so the output filename is unambiguous.
+      The runner translates --ids/--csv to a newline-separated `.txt` in
+      `fhs-app/input_scores/ops_skill_<source>_<timestamp>.txt`.
+
+      Requires fhs-app checked out locally (auto-discovered via the same
+      sibling/walk-up chain as nutrition-data-ops, or override with
+      $FHS_APP_ROOT). No NDO env vars needed — fhs-app reads its own .env.
+
   backfill_detailed_fhs_norms:
     help: Backfill detailed FHS norm values for specific products
     input: file  # -f required

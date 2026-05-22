@@ -29,6 +29,7 @@ Start with `catalog.yaml` in this directory — it has the authoritative list of
 | "send scores to client" / "publish" | `send_to_clients` |
 | "remove/delete these products safely" | `remove_products_and_scores` |
 | "export FHS for vendor X" | `generate_scores` |
+| "generate QA xlsx" / "score report for RD" / "fhs-app score those ids" | `generate_qa_report` |
 | "backfill detailed FHS norms" | `backfill_detailed_fhs_norms` |
 
 If the user's intent is ambiguous, ask them to clarify before running anything.

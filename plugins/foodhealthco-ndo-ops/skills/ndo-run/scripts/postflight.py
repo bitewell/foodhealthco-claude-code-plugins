@@ -1,22 +1,28 @@
 """Post-run verification for the ndo-run skill.
 
 Where preflight predicts what *will* change, postflight measures what *did*
-change and compares against the preflight forecast. Same dispatch shape:
+change and compares against the preflight forecast. Two dispatch tracks:
 
-* A `POSTFLIGHT_REGISTRY` maps command names to impls of shape
-  `(conn, args, started_at, preflight_payload) -> PostflightReport`.
-* The report mirrors preflight's `PreflightReport` so the runner can render
-  both with the same formatter and include both in `--summary-out`.
-* DB access is read-only via `psycopg2`, piggybacking on the runner's already-
-  built `ndo_env` so we hit the same DB the command wrote to.
+* `POSTFLIGHT_REGISTRY` — NDO `manage.py` commands. Impls have shape
+  `(conn, args, started_at, preflight_payload) -> PostflightReport` and get
+  a psycopg2 connection built from the runner's already-resolved `ndo_env`.
 
-v0 covers `bulk_create_products` only — the first command that's both write-
-heavy and easy to measure (a single COUNT against IPM). Wire additional impls
-in here as creation-style commands land.
+* `FHS_APP_POSTFLIGHT_REGISTRY` — commands with `tool: fhs_app` in catalog.
+  Impls have shape `(args, run_meta, started_at) -> PostflightReport` and
+  scan the filesystem (no DB connection) — fhs-app writes xlsx files to
+  `output_scores/`, so postflight just lists what landed.
+
+Both kinds of report flow through the same `PostflightReport` shape so the
+runner can render them with one formatter and include both in `--summary-out`.
+
+v0 NDO coverage: `bulk_create_products` only. v0 fhs-app coverage:
+`generate_qa_report`. Wire additional impls in here as commands land.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 
 import psycopg2
@@ -63,7 +69,13 @@ class PostflightReport:
     def format(self) -> str:
         border = "═" * 72
         status = "✓ matches preflight" if self.is_ok else f"⚠ gap={self.gap:+d}"
-        target_tag = "🔴 NDO PROD" if self.target == "prod" else "🟢 NDO dev"
+        if self.target == "prod":
+            target_tag = "🔴 NDO PROD"
+        elif self.target:
+            target_tag = "🟢 NDO dev"
+        else:
+            # fhs-app runs have no NDO target; suppress the misleading tag.
+            target_tag = "fhs-app (local filesystem)"
         lines = [
             "",
             border,
@@ -157,7 +169,90 @@ def postflight_bulk_create_products(
 
 
 # ---------------------------------------------------------------------------
-# Registry + entry point
+# fhs-app postflight impls (filesystem scans, no DB)
+# ---------------------------------------------------------------------------
+
+
+def postflight_generate_qa_report(
+    args, run_meta: dict, started_at: str
+) -> PostflightReport:
+    """List the xlsx files fhs-app wrote into output_scores/.
+
+    fhs-app names outputs `{source}_all_scores_{YYYYMMDD}_part_{n}.xlsx` and
+    `{source}_unscorables_for_data_entry_{YYYYMMDD}_part_{n}.xlsx`. We scan
+    for both patterns and only count files whose mtime is at or after the
+    run start, so reruns aren't credited to a fresh invocation.
+
+    Returns a "no expected count" report (expected_count=None) since there's
+    no preflight to compare against — we just surface what landed and let
+    the operator eyeball it. Zero files written is a strong signal that
+    fhs-app errored out silently.
+    """
+    source = run_meta.get("source") or "wkbk_1"
+    fhs_app_root = Path(run_meta.get("fhs_app_root") or "")
+    output_dir = fhs_app_root / "output_scores"
+
+    # Compare mtime against started_at (ISO 8601 UTC). Files written during
+    # this run will have mtime >= started_at; older files from prior runs
+    # are excluded.
+    try:
+        run_started = datetime.fromisoformat(started_at).timestamp()
+    except ValueError:
+        run_started = 0.0
+
+    scored_pattern = f"{source}_all_scores_*_part_*.xlsx"
+    unscorable_pattern = f"{source}_unscorables_for_data_entry_*_part_*.xlsx"
+
+    if not output_dir.is_dir():
+        return PostflightReport(
+            command="generate_qa_report",
+            target="",
+            expected_count=None,
+            actual_count=0,
+            buckets=[],
+            notes=[f"postflight: {output_dir} does not exist — fhs-app did not write outputs"],
+        )
+
+    scored = [p for p in output_dir.glob(scored_pattern) if p.stat().st_mtime >= run_started]
+    unscorable = [p for p in output_dir.glob(unscorable_pattern) if p.stat().st_mtime >= run_started]
+    total = len(scored) + len(unscorable)
+
+    buckets = [
+        Bucket(
+            label=f"all_scores xlsx (source={source})",
+            count=len(scored),
+            kind="ok" if scored else "warn",
+            reason="" if scored else "no scored output — fhs-app may have failed",
+        ),
+        Bucket(
+            label=f"unscorables_for_data_entry xlsx (source={source})",
+            count=len(unscorable),
+            kind="ok",
+            reason="empty is fine if every input scored cleanly" if not unscorable else "",
+        ),
+    ]
+
+    notes: list[str] = []
+    if scored:
+        notes.append(f"newest scored: {sorted(scored, key=lambda p: p.stat().st_mtime)[-1].name}")
+    if total == 0:
+        notes.append(
+            "0 xlsx files written. Check streamed output above for errors; fhs-app "
+            "swallows some exceptions and continues."
+        )
+
+    return PostflightReport(
+        command="generate_qa_report",
+        target="",
+        expected_count=None,
+        actual_count=total,
+        buckets=buckets,
+        notes=notes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registry + entry points
 # ---------------------------------------------------------------------------
 
 
@@ -165,6 +260,10 @@ PostflightImpl = Callable[..., PostflightReport]
 
 POSTFLIGHT_REGISTRY: dict[str, PostflightImpl] = {
     "bulk_create_products": postflight_bulk_create_products,
+}
+
+FHS_APP_POSTFLIGHT_REGISTRY: dict[str, PostflightImpl] = {
+    "generate_qa_report": postflight_generate_qa_report,
 }
 
 
@@ -204,4 +303,31 @@ def run_postflight(
         return None, str(e)
 
     report.target = args.target
+    return report, None
+
+
+def run_fhs_app_postflight(
+    args,
+    spec: dict,
+    run_meta: dict,
+    started_at: str,
+    exit_code: int,
+) -> tuple[Optional[PostflightReport], Optional[str]]:
+    """Run a filesystem-based postflight for catalog entries with tool: fhs_app.
+
+    Mirrors run_postflight's return shape so the caller can handle both the
+    same way. Skips on --dry-run. Always runs (even on exit_code != 0) so
+    operators see whether any files landed before fhs-app crashed.
+    """
+    if args.dry_run:
+        return None, "postflight skipped: --dry-run"
+
+    impl = FHS_APP_POSTFLIGHT_REGISTRY.get(args.command)
+    if not impl:
+        return None, f"no fhs-app postflight implementation for `{args.command}` yet"
+
+    report = impl(args, run_meta, started_at)
+    # fhs-app commands don't have a target (no NDO routing); leave the field
+    # empty so the formatter prints "" rather than a stale dev/prod tag.
+    report.target = ""
     return report, None

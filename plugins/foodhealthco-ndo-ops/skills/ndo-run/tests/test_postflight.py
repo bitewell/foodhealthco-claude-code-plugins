@@ -15,9 +15,11 @@ import pytest
 import yaml
 
 from postflight import (
+    FHS_APP_POSTFLIGHT_REGISTRY,
     POSTFLIGHT_REGISTRY,
     PostflightReport,
     postflight_bulk_create_products,
+    postflight_generate_qa_report,
 )
 
 
@@ -119,6 +121,81 @@ def test_postflight_handles_missing_source():
     assert report.actual_count == 0
     assert report.expected_count is None
     assert any("source" in n.lower() for n in report.notes)
+
+
+def test_every_fhs_app_registry_entry_is_in_catalog(catalog_commands):
+    """fhs-app postflights point at real catalog commands."""
+    for cmd in FHS_APP_POSTFLIGHT_REGISTRY:
+        assert cmd in catalog_commands, (
+            f"FHS_APP_POSTFLIGHT_REGISTRY has `{cmd}` but it isn't in catalog.yaml"
+        )
+
+
+def test_generate_qa_report_is_registered():
+    assert "generate_qa_report" in FHS_APP_POSTFLIGHT_REGISTRY, (
+        "generate_qa_report is the v0 fhs-app canary; it must stay registered"
+    )
+
+
+def test_postflight_generate_qa_report_counts_new_files(tmp_path):
+    """Files written at-or-after run start are counted; older files are not."""
+    output_dir = tmp_path / "output_scores"
+    output_dir.mkdir()
+    # An "old" pre-existing scored output from a prior demo
+    old = output_dir / "demo_X_all_scores_20260101_part_1.xlsx"
+    old.write_text("")
+    import os, time
+    old_ts = time.time() - 3600  # 1 hour ago
+    os.utime(old, (old_ts, old_ts))
+
+    # The current run starts now and produces 2 fresh files
+    started_at = datetime_now_iso()
+    fresh_scored = output_dir / "demo_X_all_scores_20260521_part_1.xlsx"
+    fresh_scored.write_text("")
+    fresh_unscorable = output_dir / "demo_X_unscorables_for_data_entry_20260521_part_1.xlsx"
+    fresh_unscorable.write_text("")
+
+    args = SimpleNamespace()
+    run_meta = {"source": "demo_X", "fhs_app_root": str(tmp_path)}
+    report = postflight_generate_qa_report(args, run_meta, started_at)
+
+    assert isinstance(report, PostflightReport)
+    # 2 fresh files; the old one is excluded by mtime filter
+    assert report.actual_count == 2
+    # No preflight forecast for this command — expected stays None
+    assert report.expected_count is None
+    assert report.is_ok
+    # Buckets break out by file kind
+    labels = " ".join(b.label for b in report.buckets)
+    assert "all_scores" in labels and "unscorables" in labels
+
+
+def test_postflight_generate_qa_report_warns_on_zero_files(tmp_path):
+    """0 files means fhs-app silently failed; postflight should surface that."""
+    (tmp_path / "output_scores").mkdir()
+    args = SimpleNamespace()
+    run_meta = {"source": "demo_X", "fhs_app_root": str(tmp_path)}
+    report = postflight_generate_qa_report(args, run_meta, datetime_now_iso())
+    assert report.actual_count == 0
+    # Operator-visible note explaining what 0 means
+    assert any("0 xlsx" in n or "silently" in n for n in report.notes)
+    # The "scored" bucket should be flagged warn so the printed report draws the eye
+    warn_buckets = [b for b in report.buckets if b.kind == "warn"]
+    assert warn_buckets, "expected a warn bucket when 0 scored files were written"
+
+
+def test_postflight_generate_qa_report_handles_missing_output_dir(tmp_path):
+    """No output_scores/ at all → clear note, no crash."""
+    args = SimpleNamespace()
+    run_meta = {"source": "demo_X", "fhs_app_root": str(tmp_path)}
+    report = postflight_generate_qa_report(args, run_meta, datetime_now_iso())
+    assert report.actual_count == 0
+    assert any("output_scores" in n or "does not exist" in n for n in report.notes)
+
+
+def datetime_now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def test_postflight_handles_missing_preflight_payload():
