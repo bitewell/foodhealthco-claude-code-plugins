@@ -67,7 +67,7 @@ Follow a single dummy product (e.g. Product #3) all the way through. Mention the
 | 5 | **Impute** | "Run backfill_imputation on source demo_X" | `backfill_imputation` | Preflight: "Will impute: 1, Already complete: 4" — the missing-protein row gets filled |
 | 6 | **Categorize** | "Run backfill_categories on source demo_X" | `backfill_categories` | Preflight: "Will categorize: 1, Already categorized: 4" — only Product #2 hits BentoML |
 | 7 | **Score** | "Run backfill_fhs on source demo_X" | `backfill_fhs` | Preflight surfaces `✗ Missing macros` block bucket on Product #4 — that one **won't** score. **Failure is loud and prevented upfront, not silent.** This is the headline feature |
-| 8 | **Score report** | Switch to fhs-app: `cd ~/Code/fhs-app && python generate_scores.py -f demo_input.txt -s demo_X` | `fhs-app/generate_scores.py` (not the skill) | "This piece still lives in fhs-app. Output xlsx is what RD reviews. Bringing into the skill is on the roadmap." |
+| 8 | **Score report** | "Generate the QA xlsx for source demo_X from those 5 IDs" | `generate_qa_report --ids 1,2,3,4,5 --source demo_X` (shells out to `fhs-app/generate_scores.py`, output xlsx lands in `fhs-app/output_scores/`) | "Same skill interface, different tool underneath. Postflight reports how many xlsx files landed — 0 means fhs-app failed silently. The xlsx is what RD reviews." |
 | 9 | **Backfill** (after RD review) | "RD flagged Product #5's tag. I edited the source CSV — re-apply with backfill_ni_profiles" | `backfill_ni_profiles --csv corrections.csv --target dev -- -if is_deep_fried` | Shows the round-trip: dietitian edits → CSV → DB. Preflight confirms the update. |
 | 10 | **Re-score** | "Re-run backfill_fhs on the edited IDs" | `backfill_fhs --ids ...` | Postflight verifies new scoring result rows landed for the corrected products |
 | 11 | **Approve** | "Approve scores against dev — here's the CSV with product_id, fhs" | `approve_scores --csv approvals.csv` | Preflight cross-checks each row's `fhs` against the stored `ScoringResult.fhs`. Show **one matching + one intentionally mismatched** row — narrate the rejection |
@@ -95,7 +95,7 @@ Common questions to prep for:
 Don't hide; mention briefly so the team knows what's coming:
 
 1. **Step 2 (Create products) is still SQL.** The plugin doesn't wrap product creation from CSV yet. Frame as a known gap; name the follow-up ticket.
-2. **Step 8 (Score report) uses `fhs-app/generate_scores.py`**, not the skill. The skill's `generate_scores` is narrower (approved-scores xlsx by vendor). Bringing the full QA report into the skill is on the roadmap.
+2. **Step 8 (Score report) now wraps `fhs-app/generate_scores.py`** behind the `generate_qa_report` skill command. The skill's existing `generate_scores` is narrower (approved-scores xlsx by vendor) — `generate_qa_report` is the comprehensive RD-facing report (scored + unscorable buckets). Requires fhs-app checked out locally; see `catalog.yaml` for details.
 3. **Async commands** (`--sync false`) skip postflight. Demo runs default (sync), so postflight always fires.
 4. **`--db platform`** (HeroDB) is blocked pending ENG-897. Mention but don't demo.
 
