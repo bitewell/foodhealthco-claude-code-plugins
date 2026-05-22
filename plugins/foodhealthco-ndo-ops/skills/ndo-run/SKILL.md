@@ -36,13 +36,15 @@ If the user's intent is ambiguous, ask them to clarify before running anything.
 
 ## How to invoke
 
-Always use the runner script — do NOT shell out to `manage.py` directly. The runner expects to run inside the `meltano-elt-pipelines` Poetry env so it can import `meltano_helpers.read_csv` and friends:
+Always use the runner script — do NOT shell out to `manage.py` directly. The runner is a plain Python script with four deps (`pyyaml`, `python-dotenv`, `psycopg2`, `boto3`); any env with those works. By convention we run it from inside `meltano-elt-pipelines`'s Poetry env because that's where the deps already live and where `.env` historically lived (the discovery chain still falls back to it):
 
 ```bash
 cd /Users/alexpellas/Code/meltano-elt-pipelines
 poetry run -- python /path/to/plugins/foodhealthco-ndo-ops/skills/ndo-run/scripts/ndo_run.py \
   <command> [options]
 ```
+
+`nutrition-data-ops`'s Poetry env also has all four deps (it's a Django + boto3 + psycopg2 app), so `cd /Users/alexpellas/Code/nutrition-data-ops && poetry run -- python ...` works equivalently. The runner has no `meltano_*` imports — meltano-hosting is incidental, not required. See follow-up ticket re: collapsing this dependency.
 
 **Important — note the `--` between `poetry run` and `python`.** Poetry 2.x argument-parses everything between `poetry run` and the script name, so it will grab `--csv` / `--ids` and error out with `The option "--csv" does not exist`. The literal `--` tells Poetry to stop parsing and treat the rest as the command line. Without it, any command that takes a `--csv` or `--ids` arg (which is most of them) will fail before the runner even starts.
 
