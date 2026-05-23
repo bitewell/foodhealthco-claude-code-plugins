@@ -1,0 +1,92 @@
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs for a PR when a new commit lands.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: validate + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          # Match the imports under plugins/**/scripts and plugins/**/tests.
+          # If a new plugin's tests pull in extra deps, add them here.
+          pip install pyyaml pytest psycopg2-binary
+
+      - name: Validate JSON manifests
+        run: |
+          python <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          failures = []
+          targets = list(Path(".claude-plugin").glob("*.json")) + \
+                    list(Path("plugins").glob("*/.claude-plugin/*.json"))
+          if not targets:
+              print("no JSON manifests found; skipping")
+              sys.exit(0)
+          for path in targets:
+              try:
+                  json.loads(path.read_text())
+                  print(f"OK   {path}")
+              except json.JSONDecodeError as e:
+                  failures.append(f"{path}: {e}")
+                  print(f"FAIL {path}: {e}")
+          if failures:
+              sys.exit(1)
+          PY
+
+      - name: Validate YAML catalogs
+        run: |
+          python <<'PY'
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          failures = []
+          targets = list(Path("plugins").rglob("catalog.yaml"))
+          if not targets:
+              print("no catalog.yaml files found; skipping")
+              sys.exit(0)
+          for path in targets:
+              try:
+                  yaml.safe_load(path.read_text())
+                  print(f"OK   {path}")
+              except yaml.YAMLError as e:
+                  failures.append(f"{path}: {e}")
+                  print(f"FAIL {path}: {e}")
+          if failures:
+              sys.exit(1)
+          PY
+
+      - name: Compile all plugin Python
+        # Catches syntax errors / unresolved imports across plugins/.
+        run: python -m compileall -q plugins/
+
+      - name: Run pytest
+        # Discovers tests under any plugins/**/tests/ directory automatically.
+        # `--no-header` keeps the log skim-able; -ra surfaces skipped/xfailed reasons.
+        run: pytest plugins/ -ra --no-header

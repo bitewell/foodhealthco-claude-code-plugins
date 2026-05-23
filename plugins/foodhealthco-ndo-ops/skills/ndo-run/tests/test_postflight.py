@@ -152,8 +152,16 @@ def test_postflight_generate_qa_report_counts_new_files(tmp_path):
     old_ts = time.time() - 3600  # 1 hour ago
     os.utime(old, (old_ts, old_ts))
 
-    # The current run starts now and produces 2 fresh files
-    started_at = datetime_now_iso()
+    # The current run starts now and produces 2 fresh files. We backdate
+    # `started_at` by 2 seconds to model real production timing (the subprocess
+    # runs for many seconds before fhs-app writes any output) AND to absorb
+    # filesystem mtime granularity differences — macOS APFS records mtime to
+    # the nanosecond, but ext4 on the GitHub Linux runner can round down to
+    # whole seconds, which would make a just-written file's mtime land just
+    # *before* a microsecond-precision started_at and trip the postflight
+    # mtime filter into excluding it as "old."
+    from datetime import datetime, timezone, timedelta
+    started_at = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()
     fresh_scored = output_dir / "demo_X_all_scores_20260521_part_1.xlsx"
     fresh_scored.write_text("")
     fresh_unscorable = output_dir / "demo_X_unscorables_for_data_entry_20260521_part_1.xlsx"
