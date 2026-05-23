@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 import psycopg2
 
-from preflight import Bucket, open_connection
+from preflight import Bucket, extract_ids_for_preflight, open_connection
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +169,182 @@ def postflight_bulk_create_products(
 
 
 # ---------------------------------------------------------------------------
+# Helpers for the per-IPM backfill postflights (Phases 4–7, 12 in the demo)
+# ---------------------------------------------------------------------------
+
+
+def _expected_will_update(preflight_payload: Optional[dict]) -> Optional[int]:
+    """Pull preflight's 'Will update'-class bucket counts. Sums all 'update' kind."""
+    if not preflight_payload:
+        return None
+    total = 0
+    found = False
+    for b in preflight_payload.get("buckets") or []:
+        if b.get("kind") == "update":
+            total += int(b.get("count") or 0)
+            found = True
+    return total if found else None
+
+
+def _ids_or_skip(args) -> tuple[Optional[list[int]], Optional[str]]:
+    """Best-effort ID extraction for postflight. Returns (ids, reason_if_unavailable).
+
+    Passes an empty spec to extract_ids_for_preflight — the source/vendor/none
+    short-circuit fires harmlessly for source-only invocations (returns None
+    with a clear reason) and falls through for --ids/--csv input."""
+    ids, reason = extract_ids_for_preflight(args, {})
+    if ids is None:
+        return None, reason
+    if not ids:
+        return None, "postflight: no input ids resolved"
+    return ids, None
+
+
+def _count_changed_in_ipm(conn, ids: list[int], started_at: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+                SELECT COUNT(*)
+                FROM ingestion_productmatch
+                WHERE id = ANY(%s)
+                  AND updated_at >= %s
+            """,
+            (list(ids), started_at),
+        )
+        (n,) = cur.fetchone()
+    return int(n)
+
+
+def _report_ipm_writes(
+    command: str,
+    label: str,
+    args,
+    conn,
+    started_at: str,
+    preflight_payload: Optional[dict],
+) -> PostflightReport:
+    """Shared body for tags/imputation/categories — they all write to IPM.
+
+    Per-row distinctions (which column actually changed) belong in deeper
+    diagnostics; postflight v0 just verifies *some* update landed for the
+    input ID set since the run began.
+    """
+    ids, skip_reason = _ids_or_skip(args)
+    if ids is None:
+        return PostflightReport(
+            command=command,
+            target="",
+            expected_count=None,
+            actual_count=0,
+            notes=[skip_reason or "postflight: no ids available"],
+        )
+
+    actual = _count_changed_in_ipm(conn, ids, started_at)
+    expected = _expected_will_update(preflight_payload)
+    is_ok = expected is None or actual == expected
+    buckets = [
+        Bucket(
+            label=label,
+            count=actual,
+            kind="ok" if is_ok else "warn",
+        )
+    ]
+    if expected is not None and actual != expected:
+        buckets.append(
+            Bucket(
+                label="Gap vs preflight forecast",
+                count=actual - expected,
+                kind="warn",
+                reason="rows may have failed mid-run (API rejection, exception, etc.)",
+            )
+        )
+    return PostflightReport(
+        command=command,
+        target="",
+        expected_count=expected,
+        actual_count=actual,
+        buckets=buckets,
+    )
+
+
+def postflight_backfill_tags(conn, args, started_at: str, preflight_payload: Optional[dict]) -> PostflightReport:
+    return _report_ipm_writes(
+        "backfill_tags",
+        "IPM rows updated since run start (tag columns expected)",
+        args, conn, started_at, preflight_payload,
+    )
+
+
+def postflight_backfill_imputation(conn, args, started_at: str, preflight_payload: Optional[dict]) -> PostflightReport:
+    return _report_ipm_writes(
+        "backfill_imputation",
+        "IPM rows updated since run start (*_imputed columns expected)",
+        args, conn, started_at, preflight_payload,
+    )
+
+
+def postflight_backfill_categories(conn, args, started_at: str, preflight_payload: Optional[dict]) -> PostflightReport:
+    return _report_ipm_writes(
+        "backfill_categories",
+        "IPM rows updated since run start (product_category expected)",
+        args, conn, started_at, preflight_payload,
+    )
+
+
+def postflight_backfill_fhs(conn, args, started_at: str, preflight_payload: Optional[dict]) -> PostflightReport:
+    """Count new ScoringResult rows created since the run for the input IDs."""
+    ids, skip_reason = _ids_or_skip(args)
+    if ids is None:
+        return PostflightReport(
+            command="backfill_fhs",
+            target="",
+            expected_count=None,
+            actual_count=0,
+            notes=[skip_reason or "postflight: no ids available"],
+        )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+                SELECT COUNT(*)
+                FROM scoring_review_scoringresult
+                WHERE product_match_id = ANY(%s)
+                  AND created_at >= %s
+            """,
+            (list(ids), started_at),
+        )
+        (actual,) = cur.fetchone()
+    actual = int(actual)
+
+    expected = _expected_will_update(preflight_payload)
+    is_ok = expected is None or actual == expected
+    buckets = [
+        Bucket(
+            label="New ScoringResult rows created since run start",
+            count=actual,
+            kind="ok" if is_ok else "warn",
+        )
+    ]
+    if expected is not None and actual != expected:
+        buckets.append(
+            Bucket(
+                label="Gap vs preflight forecast",
+                count=actual - expected,
+                kind="warn",
+                reason="FHS API may have rejected some rows; check upstream logs",
+            )
+        )
+    return PostflightReport(
+        command="backfill_fhs",
+        target="",
+        expected_count=expected,
+        actual_count=actual,
+        buckets=buckets,
+        notes=["ScoringJob archives prior SR rows; this counts NEW rows only."],
+    )
+
+
+# ---------------------------------------------------------------------------
 # fhs-app postflight impls (filesystem scans, no DB)
 # ---------------------------------------------------------------------------
 
@@ -260,6 +436,10 @@ PostflightImpl = Callable[..., PostflightReport]
 
 POSTFLIGHT_REGISTRY: dict[str, PostflightImpl] = {
     "bulk_create_products": postflight_bulk_create_products,
+    "backfill_tags": postflight_backfill_tags,
+    "backfill_imputation": postflight_backfill_imputation,
+    "backfill_categories": postflight_backfill_categories,
+    "backfill_fhs": postflight_backfill_fhs,
 }
 
 FHS_APP_POSTFLIGHT_REGISTRY: dict[str, PostflightImpl] = {
