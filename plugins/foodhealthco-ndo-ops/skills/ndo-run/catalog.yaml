@@ -291,3 +291,27 @@ scoring_review:
     notes: |
       -c is optional; if omitted, publishes to all clients matching the score rows.
       No --sync flag: runs synchronously in-process.
+
+  publish_scores_to_client:
+    help: Push CSV rows directly to FHS API /score/result (raw external publish)
+    input: file
+    args: [-f, --file, -c, --client_id]
+    sync_flag: null
+    csv_schema:
+      required_columns: [name, brand, upc, gtin, fhs]
+      id_columns: [gtin, upc]
+    notes: |
+      Both -f and -c are REQUIRED. CSV header must include ALL of:
+      name, brand, upc, gtin, fhs (validated up front by the command).
+      Per-row `upc` / `gtin` cell may be blank — only the header is enforced.
+
+      Different from `send_to_clients`: bypasses the SR/ASR-driven
+      `PublishScores` job entirely and POSTs each row direct to FHS API
+      `/score/result` via FHSAPIClient. Use when you already have a
+      curated CSV of scores to push and don't want to thread them through
+      approve_scores → ApprovedScoringResult → send_to_clients.
+      `send_to_clients` remains the canonical path for SR/ASR-managed flows.
+
+      Lives at rest_api/management/commands/ (not scoring_review/), but
+      grouped here by intent since both commands answer "publish scores
+      to a client." Pass -c via passthrough: `-- -c <client_id>`.
