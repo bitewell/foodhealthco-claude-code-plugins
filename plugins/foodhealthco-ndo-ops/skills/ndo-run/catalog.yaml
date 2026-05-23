@@ -21,7 +21,15 @@ scoring:
     sync_flag: --sync
     csv_schema:
       id_columns: [product_id, id, product_match_id, gtin, upc, int_upc, int_gtin]
-    notes: Default batch=250. Runs via ScoringJob which calls the FHS API.
+    notes: |
+      Default batch=250. Runs via ScoringJob which calls the FHS API.
+
+      Scoring writes ScoringResult/ASR rows but does NOT refresh the index
+      materialized view or reindex OpenSearch — scored products won't reach
+      consumer search until those steps run. Pass `--with-reindex` to chain
+      `refresh_fhs_view_for_index_command` + `index_scored_view_command`
+      after a successful score. The chain auto-skips on `--target dev`
+      (dev OpenSearch not wired) and when `DO_OPENSEARCH_URL` is unset.
 
   backfill_fhs_and_refresh_view_command:
     help: Score products AND refresh index materialized views
@@ -32,6 +40,11 @@ scoring:
       Takes a list of sources via `-s foo bar baz` (nargs='+'). No file input.
       After scoring, refreshes fhs_values_with_attr_for_index_mat_view. Use this
       when new profiles land for a whole source.
+
+      Refreshes the view internally but does NOT reindex OpenSearch. Pass
+      `--with-reindex` to chain `index_scored_view_command` after a successful
+      run (the chain knows to skip the redundant view refresh for this
+      command). Same dev/`DO_OPENSEARCH_URL` auto-skip rules apply.
 
   refresh_fhs_view_for_index_command:
     help: Refresh fhs_values_with_attr_for_index_mat_view (no scoring)

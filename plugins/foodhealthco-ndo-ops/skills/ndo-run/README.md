@@ -21,10 +21,10 @@ python manage.py backfill_fhs -f ops/my-ids.csv --sync true
 
 ## How it works
 
-1. Reads credentials from `meltano-elt-pipelines/.env`
+1. Reads credentials from a `.env` (plugins-repo, NDO checkout, or `~/.config/ndo-run/.env` — see `discover_env_file` in [`scripts/ndo_run.py`](scripts/ndo_run.py))
 2. Builds a CSV (from pasted IDs) or accepts a local CSV path / existing Spaces key
 3. Uploads to `btw-nutrition` under `ops-skill/<timestamp>-<cmd>.csv`
-4. Runs `poetry run python manage.py <cmd>` in the sibling `nutrition-data-ops/` checkout with translated env vars
+4. Runs `poetry run python manage.py <cmd>` in the `nutrition-data-ops/` checkout with translated env vars
 5. Streams output live
 
 No SSH. No Celery dependency (forces `--sync true` by default). Explicit confirmation before touching prod.
@@ -47,13 +47,13 @@ No SSH. No Celery dependency (forces `--sync true` by default). Explicit confirm
 
 ### Repos and Python env
 
-- `nutrition-data-ops/` checked out as a **sibling** of `meltano-elt-pipelines/`
+- `nutrition-data-ops/` checked out locally (default location: `~/Code/nutrition-data-ops/`; override with `$NDO_ROOT`)
 - Python 3.12 (3.14 breaks `spacy` + `httpcore`; 3.11 works too)
 - `poetry env use python3.12 && poetry install --no-root` in `nutrition-data-ops/`
 
 ### Credentials
 
-Everything the skill needs is set in `meltano-elt-pipelines/.env`. See [`.env.example`](../../../.env.example) — the "NDO scoring chain" section lists each variable with a `# Get from <where>` comment.
+Set the keys below in a `.env` discovered by the runner (recommended: `<foodhealthco-claude-code-plugins>/.env`). See [`.env.example`](../../../.env.example) — the "NDO scoring chain" section lists each variable with a `# Get from <where>` comment.
 
 **Required for any scoring op:**
 
@@ -79,18 +79,16 @@ Everything the skill needs is set in `meltano-elt-pipelines/.env`. See [`.env.ex
 **Quick setup for a new operator** (one-time per machine):
 
 ```bash
-# 1. Sibling checkouts under ~/Code/ or similar
-git clone git@github.com:bitewell/meltano-elt-pipelines.git
-git clone git@github.com:bitewell/nutrition-data-ops.git
+# 1. Checkout NDO under ~/Code/ or similar
+git clone git@github.com:bitewell/nutrition-data-ops.git ~/Code/nutrition-data-ops
 
-# 2. Python env for NDO
-cd nutrition-data-ops
+# 2. Python env for NDO (the runner reuses this env for its 4 deps)
+cd ~/Code/nutrition-data-ops
 poetry env use $(which python3.12)
 poetry install --no-root
-cd ..
 
-# 3. Copy and populate .env
-cd meltano-elt-pipelines
+# 3. Copy and populate .env in the plugins repo (first hit in discovery chain)
+cd ~/Code/foodhealthco-claude-code-plugins
 cp .env.example .env
 $EDITOR .env   # fill in the NDO scoring chain block per the table above
 
@@ -98,8 +96,9 @@ $EDITOR .env   # fill in the NDO scoring chain block per the table above
 gcloud auth login --enable-gdrive-access --update-adc
 
 # 5. Smoke test (dry-run, no prod writes)
-.venv/bin/python .claude/skills/ndo-run/scripts/ndo_run.py backfill_fhs \
-  --ids 12345 --target dev --dry-run
+cd ~/Code/nutrition-data-ops
+poetry run -- python /path/to/plugins/foodhealthco-ndo-ops/skills/ndo-run/scripts/ndo_run.py \
+  backfill_fhs --ids 12345 --target dev --dry-run
 ```
 
 **Rotating a key:** update the value in `.env`, no other changes needed — the runner re-reads `.env` on every invocation. (Tracked under ENG-937; future iteration may pull from GCP Secret Manager or 1Password CLI for hands-free rotation.)

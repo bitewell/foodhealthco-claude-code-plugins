@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""ndo-run: invoke nutrition-data-ops management commands from meltano-elt-pipelines.
+"""ndo-run: invoke nutrition-data-ops management commands.
 
-Reads credentials from meltano-elt-pipelines/.env, optionally uploads a CSV of
-product IDs to the btw-nutrition DigitalOcean Spaces bucket, then shells out to
-`poetry run python manage.py <command>` in the sibling nutrition-data-ops
-checkout. Streams stdout live.
+Reads credentials from a .env (see `discover_env_file` for the chain),
+optionally uploads a CSV of product IDs to the btw-nutrition DigitalOcean
+Spaces bucket, then shells out to `poetry run python manage.py <command>` in
+the nutrition-data-ops checkout. Streams stdout live.
 
 Usage (driven by Claude via the skill; humans can also invoke directly):
 
@@ -42,21 +42,16 @@ HERODB_GAP_TICKET = "ENG-897"
 # ---------------------------------------------------------------------------
 # Repo + .env discovery
 # ---------------------------------------------------------------------------
-# The skill needs two paths and one .env file. Each is resolved via a chain so
-# the skill works whether it lives in `meltano-elt-pipelines/.claude/skills/`
-# (legacy) or in `foodhealthco-claude-code-plugins/plugins/.../skills/` (new).
-#
-#   meltano-elt-pipelines/  ← has the canonical .env today
-#   nutrition-data-ops/     ← sibling; where manage.py lives
-#
-# Override any of these with the matching env var.
+# The skill needs the nutrition-data-ops checkout (where `manage.py` lives)
+# and one .env. Each is resolved via a chain so the skill works regardless of
+# cwd. Override either with the matching env var.
 
 
 def _find_dir_walking_up(start: Path, name: str, max_levels: int = 8) -> Optional[Path]:
     """Walk up from `start` looking for a sibling directory named `name`.
 
     Returns the absolute path if found, else None. Used to auto-discover
-    `meltano-elt-pipelines` or `nutrition-data-ops` from CWD or the skill dir.
+    `nutrition-data-ops` or `fhs-app` from CWD or the skill dir.
     """
     here = start.resolve()
     for _ in range(max_levels):
@@ -69,25 +64,11 @@ def _find_dir_walking_up(start: Path, name: str, max_levels: int = 8) -> Optiona
     return None
 
 
-def discover_meltano_root() -> Optional[Path]:
-    """Find meltano-elt-pipelines via env var → walk-up from CWD → walk-up from skill → ~/Code heuristic."""
-    if env := os.environ.get("MELTANO_ROOT"):
-        p = Path(env).expanduser().resolve()
-        return p if p.is_dir() else None
-    for start in (Path.cwd(), SCRIPT_DIR):
-        if found := _find_dir_walking_up(start, "meltano-elt-pipelines"):
-            return found
-    fallback = Path.home() / "Code" / "meltano-elt-pipelines"
-    return fallback if fallback.is_dir() else None
-
-
 def discover_ndo_root() -> Optional[Path]:
-    """Find nutrition-data-ops via env var → sibling of meltano → walk-up → ~/Code heuristic."""
+    """Find nutrition-data-ops via env var → walk-up from CWD/skill → ~/Code heuristic."""
     if env := os.environ.get("NDO_ROOT"):
         p = Path(env).expanduser().resolve()
         return p if p.is_dir() else None
-    if (mr := discover_meltano_root()) and (mr.parent / "nutrition-data-ops").is_dir():
-        return mr.parent / "nutrition-data-ops"
     for start in (Path.cwd(), SCRIPT_DIR):
         if found := _find_dir_walking_up(start, "nutrition-data-ops"):
             return found
@@ -96,7 +77,7 @@ def discover_ndo_root() -> Optional[Path]:
 
 
 def discover_fhs_app_root() -> Optional[Path]:
-    """Find fhs-app via env var → sibling of meltano → walk-up → ~/Code heuristic.
+    """Find fhs-app via env var → sibling of NDO → walk-up → ~/Code heuristic.
 
     Used only by catalog entries with `tool: fhs_app` (currently:
     `generate_qa_report`). fhs-app uses its own poetry env and its own .env,
@@ -105,8 +86,8 @@ def discover_fhs_app_root() -> Optional[Path]:
     if env := os.environ.get("FHS_APP_ROOT"):
         p = Path(env).expanduser().resolve()
         return p if p.is_dir() else None
-    if (mr := discover_meltano_root()) and (mr.parent / "fhs-app").is_dir():
-        return mr.parent / "fhs-app"
+    if (ndo := discover_ndo_root()) and (ndo.parent / "fhs-app").is_dir():
+        return ndo.parent / "fhs-app"
     for start in (Path.cwd(), SCRIPT_DIR):
         if found := _find_dir_walking_up(start, "fhs-app"):
             return found
@@ -118,8 +99,8 @@ def discover_env_file() -> Optional[Path]:
     """Locate the .env to load. Discovery chain (first hit wins):
 
     1. $NDO_RUN_ENV (explicit path override)
-    2. <plugins-repo>/.env  (the new home — if skill is installed under foodhealthco-claude-code-plugins)
-    3. <meltano-elt-pipelines>/.env  (legacy / current)
+    2. <plugins-repo>/.env  (recommended home if installed via marketplace)
+    3. <nutrition-data-ops>/.env  (when NDO is checked out locally)
     4. ~/.config/ndo-run/.env  (XDG-ish per-user)
     """
     # 1. Explicit override
@@ -127,7 +108,7 @@ def discover_env_file() -> Optional[Path]:
         p = Path(env).expanduser().resolve()
         return p if p.is_file() else None
 
-    # 2. Plugins repo (skill's own home if installed via marketplace)
+    # 2. Plugins repo (skill's own home if installed via marketplace).
     # The skill's own directory is the closest hint of which repo it lives in.
     # Walk up looking for the plugins repo root (contains .claude-plugin/ at root level).
     candidate_plugin_repo_marker = None
@@ -138,9 +119,9 @@ def discover_env_file() -> Optional[Path]:
     if candidate_plugin_repo_marker and (candidate_plugin_repo_marker / ".env").is_file():
         return candidate_plugin_repo_marker / ".env"
 
-    # 3. Meltano (legacy)
-    if (mr := discover_meltano_root()) and (mr / ".env").is_file():
-        return mr / ".env"
+    # 3. NDO checkout
+    if (ndo := discover_ndo_root()) and (ndo / ".env").is_file():
+        return ndo / ".env"
 
     # 4. XDG-ish
     xdg = Path.home() / ".config" / "ndo-run" / ".env"
@@ -151,7 +132,6 @@ def discover_env_file() -> Optional[Path]:
 
 
 # Resolved at import time so callers can rely on stable values.
-MELTANO_ROOT: Optional[Path] = discover_meltano_root()
 NDO_ROOT: Optional[Path] = discover_ndo_root()
 
 
@@ -173,24 +153,24 @@ def load_meltano_env() -> dict[str, str]:
             "error: no .env found. Discovery chain:\n"
             "  1. $NDO_RUN_ENV (set to an explicit path)\n"
             "  2. <foodhealthco-claude-code-plugins>/.env (if installed via marketplace)\n"
-            "  3. <meltano-elt-pipelines>/.env (legacy)\n"
+            "  3. <nutrition-data-ops>/.env\n"
             "  4. ~/.config/ndo-run/.env\n"
-            "Create one and rerun, or set MELTANO_ROOT/NDO_RUN_ENV to override."
+            "Create one and rerun, or set NDO_RUN_ENV to override."
         )
     values = dotenv_values(env_path)
     return {k: v for k, v in values.items() if v is not None}
 
 
 def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str, str]:
-    """Translate meltano .env names to what nutrition-data-ops expects."""
+    """Translate .env names to what nutrition-data-ops expects."""
     base = os.environ.copy()
+    env_path = discover_env_file()  # for error messages; load already succeeded
 
     if db == "platform":
         hero_url = meltano_env.get("FHS_HUB_DATABASE_URL")
         if not hero_url:
             sys.exit(
-                "error: --db platform requested but FHS_HUB_DATABASE_URL is not set in "
-                f"{MELTANO_ROOT}/.env"
+                f"error: --db platform requested but FHS_HUB_DATABASE_URL is not set in {env_path}"
             )
         base["DATABASE_URL"] = hero_url
         base["HERO_DATABASE_URL"] = hero_url
@@ -198,7 +178,7 @@ def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str
         key = "NDO_PROD_DATABASE_URL" if target == "prod" else "NDO_DEV_DATABASE_URL"
         url = meltano_env.get(key)
         if not url:
-            sys.exit(f"error: {key} not set in {MELTANO_ROOT}/.env")
+            sys.exit(f"error: {key} not set in {env_path}")
         base["DATABASE_URL"] = url
         if meltano_env.get("FHS_HUB_DATABASE_URL"):
             base["HERO_DATABASE_URL"] = meltano_env["FHS_HUB_DATABASE_URL"]
@@ -224,8 +204,16 @@ def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str
         "CATEGORY_ENDPOINT_TOKEN",
         # Tagging config key in DO Spaces (e.g. `t2t_v4.csv`). NDO defaults to
         # `t2t.csv` if unset, but prod runs on `t2t_v4.csv` — mismatch would
-        # tag with stale rules. Set this in meltano .env to match prod.
+        # tag with stale rules. Set this in your .env to match prod.
         "DEFAULT_TAGGING_FILE",
+        # OpenSearch connection vars consumed by `index_scored_view_command`
+        # (via NDO's settings.py → OpenSearchClientService). Only needed when
+        # --with-reindex chains the reindex step; if unset, the chain skips.
+        "DO_OPENSEARCH_URL",
+        "DO_OPENSEARCH_PORT",
+        "DO_OPENSEARCH_USERNAME",
+        "DO_OPENSEARCH_PASSWORD",
+        "DO_OPENSEARCH_USE_SSL",
     ):
         val = os.environ.get(passthrough) or meltano_env.get(passthrough)
         if val:
@@ -486,6 +474,77 @@ def run(cmd: list[str], env: dict[str, str], dry_run: bool, cwd: Optional[str] =
 
 
 # ---------------------------------------------------------------------------
+# --with-reindex chain
+# ---------------------------------------------------------------------------
+# `backfill_fhs` writes ScoringResult/ASR rows but leaves the index materialized
+# view stale and OpenSearch un-updated, so scored products don't reach consumer
+# search until two further manage.py commands run. The chain below makes that
+# propagation a single flag (opt-in, defaults off — see follow-up to PR #10).
+#
+# `backfill_fhs_and_refresh_view_command` already refreshes the view internally
+# (see bitewell/tasks/fhs.py:36), so for that command we only chain the reindex.
+
+
+REINDEX_CHAIN_COMMANDS: dict[str, list[str]] = {
+    # primary command → list of chained manage.py commands (in order)
+    "backfill_fhs": [
+        "refresh_fhs_view_for_index_command",
+        "index_scored_view_command",
+    ],
+    "backfill_fhs_and_refresh_view_command": [
+        "index_scored_view_command",
+    ],
+}
+
+
+def run_reindex_chain(
+    args: argparse.Namespace, ndo_env: dict[str, str]
+) -> tuple[list[dict], Optional[str]]:
+    """Chain refresh + reindex after a successful scoring run.
+
+    Returns (steps, skip_reason). At most one is meaningful:
+      - steps non-empty, skip_reason None → chain ran (each step records
+        command/exit_code/elapsed_s; first non-zero exit aborts the chain)
+      - steps empty, skip_reason str → chain was skipped (printed by caller)
+
+    Auto-skips when --target dev (dev OpenSearch isn't wired the same as prod)
+    or when DO_OPENSEARCH_URL is unset in the resolved env. The skip is loud
+    so operators can spot it; the audit also lands in --summary-out.
+    """
+    chain = REINDEX_CHAIN_COMMANDS.get(args.command)
+    if not chain:
+        return [], f"--with-reindex not applicable to `{args.command}`"
+
+    if args.target == "dev":
+        return [], "--target dev (dev OpenSearch not wired)"
+    if not ndo_env.get("DO_OPENSEARCH_URL"):
+        return [], "DO_OPENSEARCH_URL not set in resolved env"
+
+    steps: list[dict] = []
+    for cmd_name in chain:
+        chain_cmd = [
+            "poetry", "run", "python", "manage.py", cmd_name, "-sy", "true",
+        ]
+        print(f"\n[chain] --with-reindex: running {cmd_name}", flush=True)
+        t0 = time.monotonic()
+        chain_exit = run(chain_cmd, ndo_env, args.dry_run)
+        elapsed = round(time.monotonic() - t0, 2)
+        steps.append({
+            "command": cmd_name,
+            "exit_code": chain_exit,
+            "elapsed_s": elapsed,
+        })
+        if chain_exit != 0:
+            print(
+                f"[chain] {cmd_name} failed (exit={chain_exit}); aborting chain",
+                file=sys.stderr,
+                flush=True,
+            )
+            break
+    return steps, None
+
+
+# ---------------------------------------------------------------------------
 # fhs-app shell-out (separate path from NDO `manage.py`)
 # ---------------------------------------------------------------------------
 # Catalog entries with `tool: fhs_app` follow a simpler flow than the NDO
@@ -568,7 +627,7 @@ def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple
     if fhs_app_root is None or not fhs_app_root.exists():
         sys.exit(
             "error: fhs-app checkout not found.\n"
-            "Searched: $FHS_APP_ROOT, sibling of meltano-elt-pipelines, walk-up from CWD, ~/Code/fhs-app.\n"
+            "Searched: $FHS_APP_ROOT, sibling of nutrition-data-ops, walk-up from CWD, ~/Code/fhs-app.\n"
             "Clone it: git clone git@github.com:foodhealthco/fhs-app.git ~/Code/fhs-app\n"
             "Or set: FHS_APP_ROOT=/path/to/fhs-app"
         )
@@ -583,9 +642,9 @@ def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple
 
     # `--directory` forces poetry to resolve against fhs-app's own pyproject.toml
     # regardless of where the runner was invoked from. Without it, when the
-    # runner runs inside meltano-elt-pipelines's poetry env, the inherited
-    # POETRY_ACTIVE / VIRTUAL_ENV vars cause `poetry run` to reuse the meltano
-    # venv — which doesn't have xlsxwriter (an fhs-app-only dep).
+    # runner runs inside another project's poetry env, the inherited
+    # POETRY_ACTIVE / VIRTUAL_ENV vars cause `poetry run` to reuse that venv
+    # — which probably lacks xlsxwriter (an fhs-app-only dep).
     cmd = [
         "poetry", "--directory", str(fhs_app_root),
         "run", "python", "generate_scores.py",
@@ -613,7 +672,7 @@ def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Invoke an NDO management command from meltano-elt-pipelines.",
+        description="Invoke an NDO management command.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("command", help="manage.py command name (see catalog.yaml)")
@@ -660,6 +719,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "--summary-out)."
         ),
     )
+    parser.add_argument(
+        "--with-reindex",
+        action="store_true",
+        help=(
+            "After a successful `backfill_fhs` (or "
+            "`backfill_fhs_and_refresh_view_command`), chain "
+            "`refresh_fhs_view_for_index_command` + `index_scored_view_command` "
+            "so scored products propagate to OpenSearch consumer search. "
+            "Auto-skipped on --target dev (dev OpenSearch not wired) or when "
+            "DO_OPENSEARCH_URL is unset. For "
+            "`backfill_fhs_and_refresh_view_command` only the reindex is "
+            "chained (the command refreshes the view itself). Audited in "
+            "--summary-out."
+        ),
+    )
     ns, unknown = parser.parse_known_args(argv)
     ns.sync = ns.sync == "true"
     # Strip the literal `--` separator if present, then pass the rest through
@@ -680,6 +754,8 @@ def write_summary(
     preflight_skipped_reason: str | None = None,
     postflight_payload: dict | None = None,
     postflight_skipped_reason: str | None = None,
+    reindex_chain_steps: list[dict] | None = None,
+    reindex_chain_skipped_reason: str | None = None,
 ) -> None:
     """Write a JSON run-summary file (best-effort; never raises)."""
     payload = {
@@ -695,10 +771,15 @@ def write_summary(
         "elapsed_s": round(elapsed_s, 2),
         "extra": args.extra,
         "dry_run": bool(args.dry_run),
+        "with_reindex": bool(getattr(args, "with_reindex", False)),
         "preflight": preflight_payload,
         "preflight_skipped_reason": preflight_skipped_reason,
         "postflight": postflight_payload,
         "postflight_skipped_reason": postflight_skipped_reason,
+        "reindex_chain": {
+            "steps": reindex_chain_steps or [],
+            "skipped_reason": reindex_chain_skipped_reason,
+        },
     }
     try:
         with open(path, "w") as f:
@@ -719,6 +800,8 @@ def main(argv: list[str] | None = None) -> int:
     preflight_skipped_reason: str | None = None
     postflight_payload: dict | None = None
     postflight_skipped_reason: str | None = None
+    reindex_chain_steps: list[dict] = []
+    reindex_chain_skipped_reason: str | None = None
 
     try:
         catalog = load_catalog()
@@ -753,7 +836,7 @@ def main(argv: list[str] | None = None) -> int:
         if NDO_ROOT is None or not NDO_ROOT.exists():
             sys.exit(
                 f"error: nutrition-data-ops checkout not found.\n"
-                "Searched: $NDO_ROOT, sibling of meltano-elt-pipelines, walk-up from CWD, ~/Code/nutrition-data-ops.\n"
+                "Searched: $NDO_ROOT, walk-up from CWD, ~/Code/nutrition-data-ops.\n"
                 "Clone it: git clone git@github.com:foodhealthco/nutrition-data-ops.git\n"
                 "Or set: NDO_ROOT=/path/to/nutrition-data-ops"
             )
@@ -797,6 +880,46 @@ def main(argv: list[str] | None = None) -> int:
         elif postflight_skipped_reason and not args.dry_run:
             print(f"[postflight] skipped: {postflight_skipped_reason}", flush=True)
 
+        # --with-reindex chain: only fires for scoring commands and only when
+        # the primary run succeeded. See REINDEX_CHAIN_COMMANDS for the per-
+        # command chain definition.
+        if args.with_reindex:
+            if exit_code != 0:
+                reindex_chain_skipped_reason = (
+                    f"primary command exited {exit_code}; skipped reindex chain"
+                )
+                print(
+                    f"[chain] --with-reindex: {reindex_chain_skipped_reason}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                reindex_chain_steps, reindex_chain_skipped_reason = run_reindex_chain(
+                    args, ndo_env
+                )
+                if reindex_chain_skipped_reason:
+                    print(
+                        f"[chain] --with-reindex: skipped ({reindex_chain_skipped_reason})",
+                        flush=True,
+                    )
+                else:
+                    failed = next(
+                        (s for s in reindex_chain_steps if s["exit_code"] != 0), None
+                    )
+                    if failed is not None:
+                        exit_code = failed["exit_code"]
+        elif exit_code == 0 and args.command in REINDEX_CHAIN_COMMANDS:
+            # Loud no-op reminder: scoring landed in Postgres but consumer
+            # search won't see it until refresh + reindex run. Mirrors the
+            # "Known Gaps" follow-up from PR #10.
+            remaining = ", ".join(REINDEX_CHAIN_COMMANDS[args.command])
+            print(
+                f"\nNOTE: `{args.command}` succeeded but scored products are NOT "
+                f"yet in OpenSearch.\n  Rerun with --with-reindex, or manually "
+                f"run: {remaining}\n",
+                flush=True,
+            )
+
         return exit_code
     finally:
         if args.summary_out:
@@ -812,6 +935,8 @@ def main(argv: list[str] | None = None) -> int:
                 preflight_skipped_reason=preflight_skipped_reason,
                 postflight_payload=postflight_payload,
                 postflight_skipped_reason=postflight_skipped_reason,
+                reindex_chain_steps=reindex_chain_steps,
+                reindex_chain_skipped_reason=reindex_chain_skipped_reason,
             )
 
 

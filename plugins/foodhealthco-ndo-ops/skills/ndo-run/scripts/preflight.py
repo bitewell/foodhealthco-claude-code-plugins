@@ -17,7 +17,7 @@ Architecture:
   `--summary-out` payload (Dagster ops parse this).
 
 * DB access is read-only via `psycopg2`. The runner constructs the right
-  `DATABASE_URL` from meltano's `.env` before calling preflight, so we
+  `DATABASE_URL` from the discovered `.env` before calling preflight, so we
   inherit the same dev/prod routing the actual command will use.
 
 * Health probes are intentionally out of scope for v0; the ticket

@@ -18,6 +18,7 @@ Start with `catalog.yaml` in this directory — it has the authoritative list of
 | User says… | Command |
 |---|---|
 | "score these products" / "compute FHS" | `backfill_fhs` |
+| "score and propagate to OpenSearch" / "score and make searchable" | `backfill_fhs --with-reindex` |
 | "score source X and refresh index" / "new profiles landed" | `backfill_fhs_and_refresh_view_command` |
 | "tag products" / "apply tags" | `backfill_tags` |
 | "categorize products" | `backfill_categories` |
@@ -100,6 +101,25 @@ To opt out, pass `--no-preflight` (audited in the summary JSON).
 
 Today (v0) `backfill_categories` has a preflight impl; other commands report "no preflight implementation for `<cmd>` yet" and proceed unchanged. Follow-ups add the remaining commands.
 
+## Reindex chain (`--with-reindex`)
+
+`backfill_fhs` writes ScoringResult/ASR rows but leaves the index materialized view stale and OpenSearch un-updated, so **scored products don't reach consumer search until two further commands run**: `refresh_fhs_view_for_index_command` followed by `index_scored_view_command`. The runner can chain those for you, opt-in:
+
+```bash
+# Score 50 product IDs AND propagate to OpenSearch in one invocation
+ndo_run.py backfill_fhs --csv /tmp/ids.csv --target prod --with-reindex
+```
+
+Behavior:
+
+- **Only applies to `backfill_fhs` and `backfill_fhs_and_refresh_view_command`.** For the second command, the view refresh is already done internally, so only the OpenSearch reindex step is chained.
+- **Auto-skips on `--target dev`** (dev OpenSearch isn't wired the same as prod).
+- **Auto-skips if `DO_OPENSEARCH_URL` is unset** in the resolved env (with a loud `[chain]` log line — see `--summary-out` for the audit field).
+- **Runs synchronously** (`-sy true`) so the runner blocks until OpenSearch is fully reindexed. Large reindexes can take several minutes.
+- **If the chain fails partway**, the primary scoring run is unaffected — the failure is logged and the runner exits non-zero so callers (Dagster, operators) can notice.
+
+When `--with-reindex` is **not** passed but `backfill_fhs` succeeded, the runner prints a one-line reminder pointing the operator at the two follow-up commands (or `--with-reindex` on the rerun). This is intentional — making the silent gap loud is the whole point of the flag.
+
 ## Examples
 
 All examples below assume `cd /Users/alexpellas/Code/meltano-elt-pipelines` first. Note the `poetry run --` (with the literal `--`) — this is required so Poetry doesn't grab `--csv`/`--ids` before the runner sees them.
@@ -112,6 +132,10 @@ poetry run -- python /path/to/ndo_run.py backfill_fhs \
 # For real
 poetry run -- python /path/to/ndo_run.py backfill_fhs \
   --ids 12345,67890,11111 --target dev
+
+# Score AND propagate to OpenSearch (prod only — dev OpenSearch not wired)
+python .claude/skills/ndo-run/scripts/ndo_run.py backfill_fhs \
+  --csv /tmp/score-batch.csv --target prod --with-reindex
 
 # Tag all products from a source (no CSV needed — source drives selection)
 poetry run -- python /path/to/ndo_run.py backfill_tags \
@@ -136,8 +160,8 @@ poetry run -- python /path/to/ndo_run.py match_products \
 
 Before the first run in a session:
 
-- Confirm `nutrition-data-ops/` is a sibling of `meltano-elt-pipelines/` (runner checks and exits with a clone hint if missing).
-- Confirm `meltano-elt-pipelines/.env` has `NDO_DEV_DATABASE_URL`, `NDO_PROD_DATABASE_URL`, `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY`, `FHS_API_URL`, `FHS_API_TOKEN`. The runner will fail loudly if any are missing.
+- Confirm `nutrition-data-ops/` is checked out (runner discovers it via `$NDO_ROOT`, walk-up from CWD, or `~/Code/nutrition-data-ops`; exits with a clone hint if missing).
+- Confirm the `.env` (plugins-repo, NDO checkout, or `~/.config/ndo-run/.env` — see `discover_env_file` for the chain) has `NDO_DEV_DATABASE_URL`, `NDO_PROD_DATABASE_URL`, `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY`, `FHS_API_URL`, `FHS_API_TOKEN`. The runner will fail loudly if any are missing.
 
 ## Programmatic invocation (Dagster)
 

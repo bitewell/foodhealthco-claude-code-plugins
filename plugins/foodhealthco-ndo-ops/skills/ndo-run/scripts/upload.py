@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Upload a local CSV to the btw-nutrition DigitalOcean Spaces bucket.
 
-Reads credentials from meltano-elt-pipelines/.env:
+Reads credentials from the .env discovered by ndo_run.discover_env_file:
   - DO_SPACES_ACCESS_KEY
   - DO_SPACES_SECRET_KEY
   - DO_SPACES_REGION (default: nyc3)
@@ -28,9 +28,7 @@ DEFAULT_PREFIX = "ops-skill"
 
 
 def _load_env() -> None:
-    """Load the discovered .env. Delegates to ndo_run's discovery chain so
-    upload.py works whether the skill lives in meltano-elt-pipelines (legacy)
-    or in foodhealthco-claude-code-plugins (new home)."""
+    """Load the discovered .env. Delegates to ndo_run's discovery chain."""
     # Import lazily to avoid circular import surprises if upload.py is invoked
     # standalone before ndo_run.py runs.
     try:
@@ -63,7 +61,7 @@ def _client():
     if not access_key or not secret_key:
         sys.exit(
             "error: DO_SPACES_ACCESS_KEY / DO_SPACES_SECRET_KEY not set. "
-            "Check meltano-elt-pipelines/.env."
+            "Check your discovered .env (see ndo_run.discover_env_file)."
         )
     region = os.environ.get("DO_SPACES_REGION", DEFAULT_REGION)
     # Always use the generic regional endpoint, NOT a bucket-specific one.
