@@ -86,6 +86,7 @@ Use this for: `-r`/`-o` on `remove_products_and_scores`, `-v` on `generate_score
 2. **Always start with `--target dev`** for new operations or unusual inputs. Move to prod only after dev looks right.
 3. **Never bypass the prod confirmation** with `--force` unless the user explicitly asked for it.
 4. **Validate CSVs locally first** if the user hands you an unfamiliar file — check the header against the command's `csv_schema` in `catalog.yaml`.
+5. **Batch-size guardrail.** Any `-a`/`-b`/`-bs`/`-l` value above `NDO_RUN_MAX_BATCH` (default 1000) is clamped to the ceiling with a loud warning — a large `IN (...)` list can drop the fhs-app DB connection (`SSL SYSCALL error: EOF`, ENG-965). Pass `--allow-large-batch` to send the full value anyway; the clamp/override is recorded in `--summary-out`.
 
 ## Pre-flight preview (ENG-938)
 
@@ -99,7 +100,7 @@ For `--target prod` the runner then prompts `[y]es / [N]o` before proceeding. `-
 
 To opt out, pass `--no-preflight` (audited in the summary JSON).
 
-Today (v0) `backfill_categories` has a preflight impl; other commands report "no preflight implementation for `<cmd>` yet" and proceed unchanged. Follow-ups add the remaining commands.
+Most write commands now have a preflight impl: `backfill_categories`, `backfill_tags`, `backfill_fhs`, `backfill_imputation`, `backfill_ni_profiles`, `backfill_proxy_match`, `backfill_detailed_fhs_norms`, `approve_scores`, `send_to_clients`, `bulk_create_products`, `remove_products_and_scores`, and `archive_table` (see `scripts/preflight.py` → `PREFLIGHT_REGISTRY`). Commands without one report "no preflight implementation for `<cmd>` yet" and proceed unchanged.
 
 ## Reindex chain (`--with-reindex`)
 
