@@ -38,6 +38,16 @@ CATALOG_PATH = SKILL_DIR / "catalog.yaml"
 
 HERODB_GAP_TICKET = "ENG-897"
 
+# Batch-size guardrail (ENG-965 incident): a manual `retrieve_data_cache -a 10000`
+# overran the fhs-app's per-request query and dropped the DB connection
+# (psycopg2 "SSL SYSCALL error: EOF detected"). Per-command defaults are safe
+# (250/256), but an explicit override can still blow past what a single IN-list
+# can carry. Any batch flag above NDO_RUN_MAX_BATCH is clamped to the ceiling
+# with a loud warning unless --allow-large-batch is passed. Applies to manual
+# AND Dagster-shelled runs (dagster_ndo/jobs/scoring_chain.py shells this runner).
+DEFAULT_MAX_BATCH = int(os.environ.get("NDO_RUN_MAX_BATCH", "1000"))
+BATCH_FLAGS = frozenset({"-a", "--amount", "-b", "--batch", "-bs", "--batch_size", "-l", "--limit"})
+
 
 # ---------------------------------------------------------------------------
 # Repo + .env discovery
@@ -670,6 +680,52 @@ def main_fhs_app(args: argparse.Namespace, spec: dict, started_at: str) -> tuple
     }
 
 
+def clamp_batch_flags(
+    extra: list[str], ceiling: int, allow_large: bool
+) -> tuple[list[str], list[dict]]:
+    """Clamp passthrough batch-size flags to a safe ceiling.
+
+    Scans `extra` (tokens after `--`) for batch flags (`-a/--amount`,
+    `-b/--batch`, `-bs/--batch_size`, `-l/--limit`) and their integer values.
+    Any value > ceiling is clamped to the ceiling (unless allow_large), so an
+    oversized batch can't drop the fhs-app DB connection. Handles both
+    `-a 10000` and `-a=10000` forms. Returns (possibly-rewritten extra, audit).
+    """
+    out = list(extra)
+    clamps: list[dict] = []
+    i = 0
+    while i < len(out):
+        tok = out[i]
+        flag: Optional[str] = None
+        raw_val: Optional[str] = None
+        joined = False
+        if tok in BATCH_FLAGS and i + 1 < len(out):
+            flag, raw_val = tok, out[i + 1]
+        elif "=" in tok and tok.split("=", 1)[0] in BATCH_FLAGS:
+            flag, raw_val = tok.split("=", 1)
+            joined = True
+        if flag is None:
+            i += 1
+            continue
+        try:
+            n = int(raw_val)
+        except (TypeError, ValueError):
+            i += 1
+            continue
+        if n > ceiling:
+            clamps.append(
+                {"flag": flag, "requested": n,
+                 "applied": n if allow_large else ceiling,
+                 "clamped": not allow_large}
+            )
+            if not allow_large:
+                out[i] = f"{flag}={ceiling}" if joined else out[i]
+                if not joined:
+                    out[i + 1] = str(ceiling)
+        i += 1 if joined else 2
+    return out, clamps
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Invoke an NDO management command.",
@@ -734,6 +790,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "--summary-out."
         ),
     )
+    parser.add_argument(
+        "--allow-large-batch",
+        action="store_true",
+        help=(
+            "Override the batch-size guardrail. By default any -a/-b/-bs/-l value "
+            f"above NDO_RUN_MAX_BATCH (default {DEFAULT_MAX_BATCH}) is clamped to the "
+            "ceiling — a large IN-list can drop the fhs-app DB connection (SSL EOF). "
+            "Pass this to send the full value anyway; the clamp/override is audited "
+            "in --summary-out."
+        ),
+    )
     ns, unknown = parser.parse_known_args(argv)
     ns.sync = ns.sync == "true"
     # Strip the literal `--` separator if present, then pass the rest through
@@ -756,6 +823,7 @@ def write_summary(
     postflight_skipped_reason: str | None = None,
     reindex_chain_steps: list[dict] | None = None,
     reindex_chain_skipped_reason: str | None = None,
+    batch_clamps: list[dict] | None = None,
 ) -> None:
     """Write a JSON run-summary file (best-effort; never raises)."""
     payload = {
@@ -780,6 +848,7 @@ def write_summary(
             "steps": reindex_chain_steps or [],
             "skipped_reason": reindex_chain_skipped_reason,
         },
+        "batch_clamps": batch_clamps or [],
     }
     try:
         with open(path, "w") as f:
@@ -802,8 +871,27 @@ def main(argv: list[str] | None = None) -> int:
     postflight_skipped_reason: str | None = None
     reindex_chain_steps: list[dict] = []
     reindex_chain_skipped_reason: str | None = None
+    batch_clamps: list[dict] = []
 
     try:
+        args.extra, batch_clamps = clamp_batch_flags(
+            args.extra, DEFAULT_MAX_BATCH, args.allow_large_batch
+        )
+        for c in batch_clamps:
+            if c["clamped"]:
+                print(
+                    f"⚠ {c['flag']} {c['requested']} exceeds the safe ceiling "
+                    f"{DEFAULT_MAX_BATCH}; clamped to {DEFAULT_MAX_BATCH}. A large "
+                    f"IN-list can drop the fhs-app DB connection (SSL EOF). "
+                    f"Re-run with --allow-large-batch to send the full value.",
+                    file=sys.stderr, flush=True,
+                )
+            else:
+                print(
+                    f"⚠ {c['flag']} {c['requested']} exceeds the safe ceiling "
+                    f"{DEFAULT_MAX_BATCH} — proceeding anyway (--allow-large-batch).",
+                    file=sys.stderr, flush=True,
+                )
         catalog = load_catalog()
         if args.command not in catalog:
             sys.exit(
@@ -937,6 +1025,7 @@ def main(argv: list[str] | None = None) -> int:
                 postflight_skipped_reason=postflight_skipped_reason,
                 reindex_chain_steps=reindex_chain_steps,
                 reindex_chain_skipped_reason=reindex_chain_skipped_reason,
+                batch_clamps=batch_clamps,
             )
 
 
