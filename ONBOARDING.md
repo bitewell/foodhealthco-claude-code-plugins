@@ -67,10 +67,10 @@ chain (first hit wins):
 | `CATEGORY_ENDPOINT_URL` / `CATEGORY_ENDPOINT_TOKEN` | `backfill_categories` (BentoML) |
 | `DO_OPENSEARCH_URL` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_USE_SSL` | `--with-reindex` chain |
 
-> **Heads up on `FHS_API_URL`:** it currently points at the DigitalOcean fhs-app
-> (`waterfall-fhs-app`). That service works for **modest batches** but drops the DB
-> connection on very large ones — the skill's batch guardrail (below) keeps you safe.
-> Migrating scoring to the GCP FHS API is tracked in ENG-965.
+> **Heads up on `FHS_API_URL`:** scoring runs against the GCP FHS API
+> (`https://fhs-api.foodhealth.co/api/v1`; also set `FHSAPI_BASE_URL=https://fhs-api.foodhealth.co`).
+> The old DigitalOcean `waterfall-fhs-app` host is **dead** — don't use it. Keep batches
+> reasonable regardless; the skill's batch guardrail (below) clamps oversized `IN (...)` lists.
 
 ## 4. Verify
 

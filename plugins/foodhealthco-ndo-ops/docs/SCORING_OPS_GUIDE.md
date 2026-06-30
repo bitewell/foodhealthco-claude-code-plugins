@@ -9,7 +9,8 @@ A step-by-step reference for running tagging and scoring on products in NDO, usi
 ## Who this is for
 
 - **You**, a dietitian re-tagging / re-scoring products after editing ingredient text, nutrient values, or category. Or generating an updated score report for review.
-- Not for: brand-new product ingestion from scratch (eng helps with that), or anything touching client publishing / approve_scores at first — those come later once you're comfortable.
+- Approving scores (`approve_scores`) and publishing to clients (`send_to_clients`) are part of the RD workflow — you run the full chain through publish, with QA review before approving (see "When to escalate" below).
+- Not for: brand-new product ingestion from scratch (eng helps with that), or archive/delete operations.
 
 ---
 
@@ -84,10 +85,11 @@ DO_SPACES_ACCESS_KEY=
 DO_SPACES_SECRET_KEY=
 DO_SPACES_REGION=nyc3
 
-# --- FHS scoring API ---
-# 1Password "FHS API tokens" or DO App Platform → waterfall-fhs-app → Env Vars
-FHS_API_URL=https://waterfall-fhs-app-p5un2.ondigitalocean.app
+# --- FHS scoring API (GCP — the live host; the old DO waterfall-fhs-app is dead) ---
+# Token from 1Password "FHS API tokens" or the GCP fhs-api service config.
+FHS_API_URL=https://fhs-api.foodhealth.co/api/v1
 FHS_API_TOKEN=
+FHSAPI_BASE_URL=https://fhs-api.foodhealth.co
 
 # --- Tagging config ---
 # Tells NDO which Text2Tag config to use. MUST match what production uses
@@ -287,19 +289,18 @@ In Claude Code, run `/plugin list`. You should see `foodhealthco-ndo-ops` listed
 
 ## When to escalate to engineering
 
-| You should ask eng about… | Don't try to do yourself |
+| You should ask eng about… | Why |
 |---|---|
-| Adding a new product source from scratch (creating IPM rows from raw vendor data) | Yes (use [alex-scripts/sql/NDO Updates.sql](https://github.com/bitewell/alex-scripts/blob/main/sql/NDO%20Updates.sql) as a template; eng reviews) |
-| Approving scores in bulk (`approve_scores`) | Yes — this gates what gets published to clients |
-| Sending scores to clients (`send_to_clients`) | Yes — external side effects, audit trail matters |
-| Archive / delete operations | Yes — destructive |
-| Anything that fails with "InvalidAccessKeyId" or "permission denied" after retrying | Yes — credential issue |
-| Anything where postflight reports drift > 0 | Yes — real bug worth investigating |
+| Adding a new product source from scratch (creating IPM rows from raw vendor data) | Use [alex-scripts/sql/NDO Updates.sql](https://github.com/bitewell/alex-scripts/blob/main/sql/NDO%20Updates.sql) as a template; eng reviews |
+| Archive / delete operations | Destructive |
+| Anything that fails with "InvalidAccessKeyId" or "permission denied" after retrying | Credential issue |
+| Anything where postflight reports drift > 0 | Real bug worth investigating |
 
-What you CAN do solo:
-- `backfill_tags` on a small set of IPM IDs / one source (dev or prod)
-- `backfill_fhs` on a small set of IPM IDs / one source (dev or prod)
-- Generate a score report
+What you CAN do solo — the full scoring → publish chain:
+- `backfill_tags`, `backfill_imputation`, `backfill_fhs` on a set of IPM IDs / one source (dev or prod)
+- `generate_qa_report` — and **review the QA xlsx before approving**
+- `approve_scores` — gates what gets published; run only after QA review looks right
+- `send_to_clients` — publishes to clients; the irreversible end of the chain
 - Dry-runs of anything
 
 ---
