@@ -85,11 +85,11 @@ DO_SPACES_ACCESS_KEY=
 DO_SPACES_SECRET_KEY=
 DO_SPACES_REGION=nyc3
 
-# --- FHS scoring API (GCP — the live host; the old DO waterfall-fhs-app is dead) ---
-# Token from 1Password "FHS API tokens" or the GCP fhs-api service config.
-FHS_API_URL=https://fhs-api.foodhealth.co/api/v1
+# --- FHS scoring API (DigitalOcean waterfall host — NDO main scores against this) ---
+# NDO sends an `items` schema this host speaks. NOT the GCP fhs-api.foodhealth.co
+# Laravel API (that expects a `products` schema NDO doesn't send).
+FHS_API_URL=https://waterfall-fhs-app-p5un2.ondigitalocean.app
 FHS_API_TOKEN=
-FHSAPI_BASE_URL=https://fhs-api.foodhealth.co
 
 # --- Tagging config ---
 # Tells NDO which Text2Tag config to use. MUST match what production uses
