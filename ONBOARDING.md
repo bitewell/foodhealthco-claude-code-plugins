@@ -67,10 +67,12 @@ chain (first hit wins):
 | `CATEGORY_ENDPOINT_URL` / `CATEGORY_ENDPOINT_TOKEN` | `backfill_categories` (BentoML) |
 | `DO_OPENSEARCH_URL` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_USE_SSL` | `--with-reindex` chain |
 
-> **Heads up on `FHS_API_URL`:** scoring runs against the GCP FHS API
-> (`https://fhs-api.foodhealth.co/api/v1`; also set `FHSAPI_BASE_URL=https://fhs-api.foodhealth.co`).
-> The old DigitalOcean `waterfall-fhs-app` host is **dead** — don't use it. Keep batches
-> reasonable regardless; the skill's batch guardrail (below) clamps oversized `IN (...)` lists.
+> **Heads up on `FHS_API_URL`:** NDO `main` scores against the DigitalOcean waterfall host
+> (`https://waterfall-fhs-app-p5un2.ondigitalocean.app`) — it speaks the `items` schema NDO
+> sends. The GCP `fhs-api.foodhealth.co` API is a *separate* service (`products` schema) NDO
+> does not speak yet, so don't repoint scoring there (it would 422). Keep batches reasonable;
+> the skill's batch guardrail (below) clamps oversized `IN (...)` lists. GCP scoring migration
+> is future work (ENG-874/965).
 
 ## 4. Verify
 
