@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scoring Ops — Dietitian Walkthrough</title>
+<style>
+  :root{
+    --green-900:#14401f; --green-700:#1f6b34; --green-500:#2f9e4f; --green-300:#7fce97;
+    --green-50:#eef7f0; --ink:#16241a; --muted:#5d7166; --paper:#fbfdfb;
+    --amber:#b8721a; --amber-bg:#fdf3e2; --red:#b4302a; --line:#d7e6db;
+    --code-bg:#0f2417; --code-ink:#d6f0dd;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:var(--green-50);
+  }
+  .deck{max-width:960px;margin:0 auto}
+  .slide{
+    display:none; min-height:100vh; padding:64px 56px 96px;
+    flex-direction:column; justify-content:flex-start;
+  }
+  .slide.active{display:flex}
+  h1{font-size:44px;line-height:1.1;margin:0 0 12px;color:var(--green-900);letter-spacing:-.5px}
+  h2{font-size:30px;margin:0 0 20px;color:var(--green-900);letter-spacing:-.3px}
+  .kicker{font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--green-500);margin-bottom:18px}
+  .lead{font-size:20px;color:var(--muted);max-width:62ch;line-height:1.5}
+  ul,ol{line-height:1.7;font-size:18px;max-width:64ch;padding-left:22px}
+  li{margin:7px 0}
+  li b{color:var(--green-900)}
+  code{background:var(--green-50);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:.86em;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--green-900)}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:18px 20px;overflow:auto;font-size:14px;line-height:1.55;font-family:"SF Mono",Menlo,Consolas,monospace}
+  pre code{background:none;border:none;color:inherit;padding:0}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0;font-size:15px}
+  .chip{background:#fff;border:1.5px solid var(--green-300);color:var(--green-900);border-radius:999px;padding:8px 14px;font-weight:600}
+  .chip.alt{background:var(--green-700);color:#fff;border-color:var(--green-700)}
+  .arrow{color:var(--green-300);font-weight:800}
+  .steps{counter-reset:s;list-style:none;padding:0;max-width:70ch}
+  .steps li{counter-increment:s;position:relative;padding:12px 0 12px 52px;border-bottom:1px solid var(--line);font-size:18px}
+  .steps li:before{content:counter(s);position:absolute;left:0;top:10px;width:34px;height:34px;border-radius:50%;background:var(--green-700);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .say{color:var(--green-700);font-style:italic}
+  .note{background:var(--amber-bg);border-left:4px solid var(--amber);border-radius:0 8px 8px 0;padding:14px 18px;margin:16px 0;font-size:16px;max-width:66ch}
+  .note.stop{background:#fbeae9;border-left-color:var(--red)}
+  .note b{color:var(--amber)}
+  .note.stop b{color:var(--red)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:10px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .card h3{margin:0 0 8px;color:var(--green-900);font-size:18px}
+  .card p,.card li{font-size:15px;color:var(--muted);margin:4px 0}
+  table{border-collapse:collapse;width:100%;font-size:16px;margin-top:8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--green-700);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+  /* nav */
+  .nav{position:fixed;bottom:0;left:0;right:0;height:52px;background:rgba(255,255,255,.92);backdrop-filter:blur(6px);border-top:1px solid var(--line);display:flex;align-items:center;justify-content:center;gap:18px;z-index:50}
+  .nav button{border:1px solid var(--green-300);background:#fff;color:var(--green-700);border-radius:7px;padding:6px 14px;font-size:14px;font-weight:600;cursor:pointer}
+  .nav button:hover{background:var(--green-50)}
+  .counter{font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px;min-width:54px;text-align:center}
+  .progress{position:fixed;top:0;left:0;height:3px;background:var(--green-500);z-index:60;transition:width .2s}
+  /* feedback */
+  .fbtn{position:fixed;bottom:64px;right:18px;z-index:55;border:none;background:var(--green-700);color:#fff;border-radius:999px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.18)}
+  .fpanel{position:fixed;bottom:108px;right:18px;width:320px;max-width:90vw;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.22);padding:16px;z-index:56;display:none}
+  .fpanel.open{display:block}
+  .fpanel h4{margin:0 0 8px;font-size:15px;color:var(--green-900)}
+  .fpanel textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:14px;resize:vertical}
+  .fpanel .row{display:flex;gap:8px;margin-top:8px}
+  .fpanel .row button{flex:1;border:none;border-radius:7px;padding:8px;font-size:13px;font-weight:600;cursor:pointer}
+  .fpanel .save{background:var(--green-50);color:var(--green-700);border:1px solid var(--green-300)}
+  .fpanel .export{background:var(--green-700);color:#fff}
+  .fhint{font-size:12px;color:var(--muted);margin-top:6px}
+  @media print{
+    body{background:#fff}
+    .slide{display:flex!important;page-break-after:always;min-height:auto;padding:40px}
+    .nav,.progress,.fbtn,.fpanel{display:none!important}
+    pre{border:1px solid #ccc}
+  }
+  @media (max-width:680px){
+    .slide{padding:40px 24px 90px}
+    h1{font-size:32px} h2{font-size:24px}
+    .grid2{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="deck" id="deck">
+
+  <!-- 1 -->
+  <section class="slide active">
+    <div class="kicker">FoodHealth · Scoring Ops</div>
+    <h1>Running the scoring pipeline,<br>by chat.</h1>
+    <p class="lead">A 15-minute walkthrough for our two dietitians. By the end you'll have scored a batch on the safe (dev) database and know exactly how to run CLI-869 — protein powders — end to end on your own.</p>
+    <div class="flow" style="margin-top:32px">
+      <span class="chip">No SSH</span><span class="arrow">·</span>
+      <span class="chip">No droplet console</span><span class="arrow">·</span>
+      <span class="chip">No <code>manage.py</code> memorizing</span>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide">
+    <div class="kicker">The mental model</div>
+    <h2>One loop, every time</h2>
+    <div class="flow">
+      <span class="chip">You ask in plain English</span><span class="arrow">→</span>
+      <span class="chip">Preflight (what will change)</span><span class="arrow">→</span>
+      <span class="chip alt">You confirm</span><span class="arrow">→</span>
+      <span class="chip">It runs</span><span class="arrow">→</span>
+      <span class="chip">Postflight (did it land)</span>
+    </div>
+    <ul>
+      <li><b>Preflight</b> buckets every product: <code>✓ update</code> / <code>↻ skip</code> / <code>✗ block</code> — before anything is written.</li>
+      <li><b>You confirm</b> — on prod, Claude makes you type <code>prod</code> to proceed.</li>
+      <li><b>Postflight</b> re-queries the DB and tells you if the writes actually landed (flags "drift" if not).</li>
+    </ul>
+    <p class="lead" style="margin-top:14px">You're always driving. Claude never writes to prod without showing you the preflight and getting a typed confirmation first.</p>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide">
+    <div class="kicker">One-time setup · ~20–30 min</div>
+    <h2>Get your machine ready</h2>
+    <ol class="steps">
+      <li><b>Claude Code</b> — install from claude.com/claude-code, sign in with <code>@foodhealth.co</code>.</li>
+      <li><b>Repo access</b> — confirm you're added to <code>nutrition-data-ops</code> and <code>fhs-app</code> with a working SSH key.</li>
+      <li><b>Clone + deps</b> — clone both repos under <code>~/Code</code>, then <code>poetry install</code> in each.</li>
+      <li><b>Install the plugin</b> — <code>/plugin marketplace add bitewell/foodhealthco-claude-code-plugins</code> then <code>/plugin install foodhealthco-ndo-ops@foodhealthco</code>, restart.</li>
+      <li><b>Drop in your <code>.env</code></b> — the scoped keys file (handed to you separately) at <code>~/Code/nutrition-data-ops/.env</code>.</li>
+    </ol>
+    <div class="note"><b>Verify with no risk:</b> ask Claude for a <code>--dry-run</code> of <code>backfill_fhs</code> on dev for ids <code>1,2,3</code>. You should see a preflight and the resolved command — and <b>nothing executes</b>.</div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide">
+    <div class="kicker">Safety rails</div>
+    <h2>Four habits that keep you safe</h2>
+    <div class="grid2">
+      <div class="card"><h3>1 · Dry-run first</h3><p>When unsure, ask for a dry-run. It shows the preflight and the exact command, writes nothing.</p></div>
+      <div class="card"><h3>2 · Dev before prod</h3><p>Rehearse on <code>--target dev</code>. Seeing <code>✗ Not in IPM</code> on dev is normal — dev has different data.</p></div>
+      <div class="card"><h3>3 · Typed prod confirm</h3><p>Every prod write pauses for you to type <code>prod</code>. That pause is your last look at the preflight.</p></div>
+      <div class="card"><h3>4 · Small batches</h3><p>Drain backlogs a few hundred at a time. Anything over 1,000 is clamped with a warning.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide">
+    <div class="kicker">Live demo · DEV only — nothing real changes</div>
+    <h2>Let's run the loop together</h2>
+    <ol class="steps">
+      <li>Confirm the plugin is on: <code>/plugin list</code> shows <code>foodhealthco-ndo-ops</code>.</li>
+      <li><span class="say">"Dry-run backfill_fhs against dev for IPM IDs 1,2,3."</span> — read the preflight buckets; note nothing ran. (Dry-run only on dev — see below.)</li>
+      <li><span class="say">"Find a few dev IPM ids that have ingredients_text, then run backfill_tags against dev for them."</span> — the real-write loop; watch the postflight verify it landed.</li>
+      <li><span class="say">"Score prod ID 3067619 and show me the result."</span> — this is where a real FHS value appears. Dev can't produce one.</li>
+      <li>Recap the rails: dry-run → dev → typed <code>prod</code> → batch limit.</li>
+    </ol>
+    <div class="note"><b>Why scoring is dry-run-only on dev:</b> <code>backfill_fhs</code> sends just the product ID; the FHS host looks up nutrients from its own (prod) data, so it doesn't recognize dev IDs — a dev scoring run returns <b>0</b>. Rehearse the *mechanics* on dev; real scores only come back on <b>prod</b>, which is where CLI-869 runs (next slide).</div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide">
+    <div class="kicker">CLI-869 · the real run, on prod</div>
+    <h2>Protein powders, end to end</h2>
+    <table>
+      <tr><th>Step</th><th>What you say to Claude</th></tr>
+      <tr><td><b>0 · Identify</b></td><td><span class="say">"Find protein powders not yet approved and export their ids."</span></td></tr>
+      <tr><td><b>1 · Tag (t2t)</b></td><td><span class="say">"Run backfill_tags against prod for those ids."</span></td></tr>
+      <tr><td><b>2 · Impute</b></td><td><span class="say">"Run backfill_imputation against prod for those ids."</span> (adds missing macros incl. added sugars)</td></tr>
+      <tr><td><b>3 · Score</b></td><td><span class="say">"Run backfill_fhs against prod for those ids."</span></td></tr>
+      <tr><td><b>4 · QA</b></td><td><span class="say">"Generate a score QA report."</span> → <b>review the xlsx</b></td></tr>
+      <tr><td><b>5 · Approve</b></td><td><span class="say">"Build an approve CSV (product_id + fhs) and run approve_scores against prod."</span></td></tr>
+      <tr><td><b>6 · Publish</b></td><td><span class="say">"Run send_to_clients against prod for those ids."</span></td></tr>
+    </table>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide">
+    <div class="kicker">Two things that trip people up</div>
+    <h2>Know these before you run</h2>
+    <div class="note"><b>Approve needs <code>fhs</code> too.</b> <code>approve_scores</code> rejects an IDs-only CSV — it needs <b>both</b> <code>product_id</code> and <code>fhs</code> columns. Just ask Claude to "build the approve CSV from the ScoringResult rows" and it pulls the scores for you.</div>
+    <div class="note"><b>Some protein powders aren't scoreable yet.</b> Anything still sitting in the ingestion table (not yet matched into a product record) won't show up in the identify query and can't be scored until it's bridged in. Flag those for eng — don't let them block the main batch.</div>
+    <div class="note stop"><b>Stop &amp; ask eng if:</b> postflight reports drift (expected N, got fewer), uploads fail with <code>InvalidAccessKeyId</code>, or anything wants an archive/delete. Screenshot and send.</div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide">
+    <div class="kicker">Cheat sheet</div>
+    <h2>What to remember</h2>
+    <div class="grid2">
+      <div class="card"><h3>The loop</h3><p>Ask → preflight → confirm → run → postflight. Always.</p></div>
+      <div class="card"><h3>Order for CLI-869</h3><p>identify → tag → impute → score → QA → approve → publish.</p></div>
+      <div class="card"><h3>Safe by default</h3><p>Dry-run when unsure. Dev before prod. Batches of a few hundred.</p></div>
+      <div class="card"><h3>When in doubt</h3><p>Just describe what you want in plain English — Claude picks the command and shows you before it writes.</p></div>
+    </div>
+    <p class="lead" style="margin-top:18px">Full written runbook accompanies this deck. Questions → ping Alex.</p>
+  </section>
+
+</div>
+
+<button class="fbtn" id="fbtn" title="Leave a note on this slide">💬 Feedback</button>
+<div class="fpanel" id="fpanel">
+  <h4>Note on slide <span id="fslide">1</span></h4>
+  <textarea id="ftext" placeholder="What's unclear, missing, or worth changing?"></textarea>
+  <div class="row">
+    <button class="save" id="fsave">Save note</button>
+    <button class="export" id="fexport">Export all → email</button>
+  </div>
+  <div class="fhint" id="fhint">Notes are kept in this browser until you export.</div>
+</div>
+
+<div class="nav">
+  <button id="prev">← Prev</button>
+  <span class="counter"><span id="cur">1</span> / <span id="total">8</span></span>
+  <button id="next">Next →</button>
+</div>
+
+<script>
+  var slides=[].slice.call(document.querySelectorAll('.slide'));
+  var i=0, notes={};
+  var cur=document.getElementById('cur'), prog=document.getElementById('progress');
+  document.getElementById('total').textContent=slides.length;
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach(function(s,k){s.classList.toggle('active',k===i)});
+    cur.textContent=i+1;
+    document.getElementById('fslide').textContent=i+1;
+    document.getElementById('ftext').value=notes[i]||'';
+    prog.style.width=((i+1)/slides.length*100)+'%';
+    window.scrollTo(0,0);
+  }
+  document.getElementById('next').onclick=function(){show(i+1)};
+  document.getElementById('prev').onclick=function(){show(i-1)};
+  document.addEventListener('keydown',function(e){
+    if(e.target.tagName==='TEXTAREA')return;
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')show(i+1);
+    if(e.key==='ArrowLeft'||e.key==='PageUp')show(i-1);
+  });
+  // feedback
+  var panel=document.getElementById('fpanel');
+  document.getElementById('fbtn').onclick=function(){panel.classList.toggle('open')};
+  document.getElementById('fsave').onclick=function(){
+    notes[i]=document.getElementById('ftext').value;
+    document.getElementById('fhint').textContent='Saved note on slide '+(i+1)+'.';
+  };
+  document.getElementById('fexport').onclick=function(){
+    notes[i]=document.getElementById('ftext').value;
+    var md='# Scoring Ops deck — feedback\n\n';
+    var any=false;
+    Object.keys(notes).sort(function(a,b){return a-b}).forEach(function(k){
+      if(notes[k]&&notes[k].trim()){any=true;md+='## Slide '+(parseInt(k)+1)+'\n'+notes[k].trim()+'\n\n';}
+    });
+    if(!any){document.getElementById('fhint').textContent='No notes to export yet.';return;}
+    var subject=encodeURIComponent('Scoring Ops deck feedback');
+    var body=encodeURIComponent(md);
+    window.location.href='mailto:alex@foodhealth.co?subject='+subject+'&body='+body;
+  };
+  show(0);
+</script>
+</body>
+</html>
