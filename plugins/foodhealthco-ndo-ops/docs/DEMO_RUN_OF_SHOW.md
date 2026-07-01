@@ -4,7 +4,9 @@ Light run-of-show for demoing the `foodhealthco-ndo-ops` plugin end-to-end. ~30 
 
 Audience: engineers + dietitians + RD reviewers. Goal: prove the plugin replaces SSH/console workflows with a single Claude Code interface, and onboard the team to use it themselves.
 
-> Companion: [SCORING_OPS_GUIDE.md](SCORING_OPS_GUIDE.md) covers the dietitian-facing setup + troubleshooting. This doc is the demo-runner's cheat sheet.
+> **Companions (keep in sync):** [SCORING_OPS_GUIDE.md](SCORING_OPS_GUIDE.md) — dietitian setup + troubleshooting · [scoring-ops-demo.html](scoring-ops-demo.html) — the slide deck to present from · [cli-869-scoring-runbook.md](cli-869-scoring-runbook.md) — the protein-powder (CLI-869) production run.
+>
+> This doc is the **presenter's cheat sheet** for a full-lifecycle demo on dummy data; the deck is its visual companion. (The deck + runbook are scoped to the two-dietitian CLI-869 onboarding; this run-of-show is the broader team demo. They share the same plugin + safety model.)
 
 ---
 
@@ -72,6 +74,12 @@ Three slides, ~90 seconds each:
 ## Demo flow (~25 min)
 
 Follow a single dummy product (e.g. Product #3) all the way through. Mention the others when relevant.
+
+> ⚠️ **Scoring on dev does NOT return real scores — verified 2026-06-30.** The FHS scoring host reads **prod** data and resolves products by id, so dummy products that exist only on dev come back **empty (0 scored)** — confirmed (prod id 3067619 scored; a dev-only id returned `{"items":[]}`). This breaks the *back half* of the flow on dev dummies: Phase 7's **real** run writes 0 ScoringResult rows, and Phases 10 (report), 12 (re-score), 13 (approve — cross-checks stored `ScoringResult.fhs`) have nothing to work with. Handle it one of two ways:
+> - **Preflight-only on dev (recommended for a safe demo):** run Phases 7 and 13 as `--dry-run` and narrate — the preflight bucketing *is* the teaching moment. Skip 10/12, or run them against prod (below).
+> - **Use real prod IDs for the scoring half:** swap in a couple of already-approved prod IPM ids for Phases 7/10/13 (re-scoring already-approved items is idempotent — see [cli-869-scoring-runbook.md](cli-869-scoring-runbook.md)).
+>
+> Also: the scoring host (`waterfall-fhs-app`) is **deprecated and mid-migration** to `fhs-food-intel`, and was seen 404ing today — a *blanket* 404 means it's down (escalate ENG-874), not transient. `generate_qa_report` scores **locally** (reads prod) as a QA fallback but does not write ScoringResult.
 
 | # | Phase | What to do | Skill command / tool | Teaching moment |
 |---|---|---|---|---|
