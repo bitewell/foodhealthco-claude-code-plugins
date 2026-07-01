@@ -111,6 +111,8 @@ Writes ScoringResult rows. Preflight blocks any product missing the minimum macr
 - **Search propagation:** scored products don't reach consumer search until the reindex chain runs. `--with-reindex` auto-skips here because `DO_OPENSEARCH_URL` isn't in the scoped env. If these need to be searchable, that's a follow-up (provision OpenSearch creds, or eng runs the reindex).
 - **Batching:** keep batches ≤ a few hundred; the 1000 guardrail clamps larger `IN (...)` lists.
 
+> ⚠️ **If scoring returns 404 for every item, stop.** The FHS scoring host (`waterfall-fhs-app`) is a **deprecated** service being migrated to `fhs-food-intel` (GKE/HeroDB) — it's been observed down. A 404 means the host is gone, not a transient; don't retry blindly. Fallback: `generate_qa_report` scores **locally** (no API) so you can still produce a QA report — but it does **not** write ScoringResult, so `approve_scores` / `send_to_clients` can't proceed on those rows until the host is back or the migration lands. Escalate to eng (ENG-874).
+
 ### Step 5 — Score QA
 *"Generate a score QA report for those IDs."* → `generate_qa_report` writes scored + unscorable xlsx to `~/Code/fhs-app/output_scores/`. **Review before approving.**
 

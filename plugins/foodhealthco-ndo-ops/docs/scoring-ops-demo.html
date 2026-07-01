@@ -171,6 +171,7 @@
       <tr><td><b>5 · Approve</b></td><td><span class="say">"Build an approve CSV (product_id + fhs) and run approve_scores against prod."</span></td></tr>
       <tr><td><b>6 · Publish</b></td><td><span class="say">"Run send_to_clients against prod for those ids."</span></td></tr>
     </table>
+    <div class="note stop"><b>If scoring 404s for every item, stop.</b> The FHS scoring host is deprecated and mid-migration — a 404 means it's down, not transient. Don't retry blindly; escalate to eng. You can still generate a QA report (it scores locally), but approve + publish can't proceed until scoring is back.</div>
   </section>
 
   <!-- 7 -->
