@@ -18,8 +18,9 @@ Start with `catalog.yaml` in this directory — it has the authoritative list of
 | User says… | Command |
 |---|---|
 | "score these products" / "compute FHS" | `backfill_fhs` |
-| "score and propagate to OpenSearch" / "score and make searchable" | `backfill_fhs --with-reindex` |
-| "score source X and refresh index" / "new profiles landed" | `backfill_fhs_and_refresh_view_command` |
+| "score source X" / "new profiles landed" | `backfill_fhs_and_refresh_view_command` |
+| "approve and make searchable" / "approve and push to OpenSearch" | `approve_scores --with-reindex` |
+| "approve, reindex, and publish to clients" | `approve_scores --with-reindex --send-to-clients all` |
 | "tag products" / "apply tags" | `backfill_tags` |
 | "categorize products" | `backfill_categories` |
 | "impute missing macros/calories" | `backfill_imputation` |
@@ -102,24 +103,37 @@ To opt out, pass `--no-preflight` (audited in the summary JSON).
 
 Most write commands now have a preflight impl: `backfill_categories`, `backfill_tags`, `backfill_fhs`, `backfill_imputation`, `backfill_ni_profiles`, `backfill_proxy_match`, `backfill_detailed_fhs_norms`, `approve_scores`, `send_to_clients`, `bulk_create_products`, `remove_products_and_scores`, and `archive_table` (see `scripts/preflight.py` → `PREFLIGHT_REGISTRY`). Commands without one report "no preflight implementation for `<cmd>` yet" and proceed unchanged.
 
-## Reindex chain (`--with-reindex`)
+## Propagation at approval time (`--with-reindex`, `--send-to-clients`)
 
-`backfill_fhs` writes ScoringResult/ASR rows but leaves the index materialized view stale and OpenSearch un-updated, so **scored products don't reach consumer search until two further commands run**: `refresh_fhs_view_for_index_command` followed by `index_scored_view_command`. The runner can chain those for you, opt-in:
+The consumer search index is rebuilt **from the approved-scores view** (`index_scored_view_command` reads that view), so propagation belongs to **approval, not scoring**. `backfill_fhs` only writes UNAPPROVED ScoringResult/ASR rows — those legitimately shouldn't reach consumer search until an operator approves them. Both propagation steps therefore hang off `approve_scores`:
 
 ```bash
-# Score 50 product IDs AND propagate to OpenSearch in one invocation
-ndo_run.py backfill_fhs --csv /tmp/ids.csv --target prod --with-reindex
+# Approve a CSV of scores, rebuild the index views, and push to OpenSearch
+ndo_run.py approve_scores --csv /tmp/approvals.csv --target prod --with-reindex
+
+# ...and also publish the approved scores to all clients on those rows
+ndo_run.py approve_scores --csv /tmp/approvals.csv --target prod \
+  --with-reindex --send-to-clients all
+
+# ...or publish to a single named client
+ndo_run.py approve_scores --csv /tmp/approvals.csv --target prod \
+  --with-reindex --send-to-clients select --client-id 42
 ```
 
-Behavior:
+`--with-reindex` behavior:
 
-- **Only applies to `backfill_fhs` and `backfill_fhs_and_refresh_view_command`.** For the second command, the view refresh is already done internally, so only the OpenSearch reindex step is chained.
-- **Auto-skips on `--target dev`** (dev OpenSearch isn't wired the same as prod).
-- **Auto-skips if `DO_OPENSEARCH_URL` is unset** in the resolved env (with a loud `[chain]` log line — see `--summary-out` for the audit field).
+- **Only applies to `approve_scores`.** After a successful approve, it chains `refresh_fhs_view_for_index_command` then `index_scored_view_command`. Passing it to any other command is a hard error (with a pointer to this flow) — `backfill_fhs` no longer reindexes.
+- **Auto-skips on `--target dev`** (dev OpenSearch isn't wired the same as prod) and **if `DO_OPENSEARCH_URL` is unset** (loud `[chain]` log line; audited in `--summary-out`).
 - **Runs synchronously** (`-sy true`) so the runner blocks until OpenSearch is fully reindexed. Large reindexes can take several minutes.
-- **If the chain fails partway**, the primary scoring run is unaffected — the failure is logged and the runner exits non-zero so callers (Dagster, operators) can notice.
+- **If the chain fails partway**, the approve run itself is unaffected — the failure is logged and the runner exits non-zero.
 
-When `--with-reindex` is **not** passed but `backfill_fhs` succeeded, the runner prints a one-line reminder pointing the operator at the two follow-up commands (or `--with-reindex` on the rerun). This is intentional — making the silent gap loud is the whole point of the flag.
+`--send-to-clients` behavior:
+
+- **Only applies to `approve_scores`**, and runs **after** the reindex chain. Reuses the same Spaces key the approve consumed (it carries `product_id`).
+- **`all`** → publishes to every client on the approved rows. **`select`** → one client (requires `--client-id`). **`requested`** (only clients who requested the product) is **not supported yet** — NDO has no requested-client concept; it's rejected at parse time and tracked as a future feature (ENG-895 area).
+- **Prod-only** — auto-skips on `--target dev` (client publish is a real external side effect). Audited in `--summary-out`.
+
+When these flags are **not** passed, the runner prints loud one-line reminders so the gap between "written to Postgres" and "visible to consumers/clients" is never silent: after `backfill_fhs` it points at `approve_scores --with-reindex`; after a bare `approve_scores` it points at `--with-reindex` / `--send-to-clients`.
 
 ## Examples
 
@@ -134,9 +148,9 @@ poetry run -- python /path/to/ndo_run.py backfill_fhs \
 poetry run -- python /path/to/ndo_run.py backfill_fhs \
   --ids 12345,67890,11111 --target dev
 
-# Score AND propagate to OpenSearch (prod only — dev OpenSearch not wired)
-python .claude/skills/ndo-run/scripts/ndo_run.py backfill_fhs \
-  --csv /tmp/score-batch.csv --target prod --with-reindex
+# Approve scores AND propagate to OpenSearch (prod only — dev OpenSearch not wired)
+python .claude/skills/ndo-run/scripts/ndo_run.py approve_scores \
+  --csv /tmp/approvals.csv --target prod --with-reindex
 
 # Tag all products from a source (no CSV needed — source drives selection)
 poetry run -- python /path/to/ndo_run.py backfill_tags \

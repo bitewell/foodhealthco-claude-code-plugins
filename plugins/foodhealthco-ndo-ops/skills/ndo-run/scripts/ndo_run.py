@@ -218,7 +218,8 @@ def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str
         "DEFAULT_TAGGING_FILE",
         # OpenSearch connection vars consumed by `index_scored_view_command`
         # (via NDO's settings.py → OpenSearchClientService). Only needed when
-        # --with-reindex chains the reindex step; if unset, the chain skips.
+        # `approve_scores --with-reindex` chains the reindex step; if unset,
+        # the chain skips.
         "DO_OPENSEARCH_URL",
         "DO_OPENSEARCH_PORT",
         "DO_OPENSEARCH_USERNAME",
@@ -484,33 +485,44 @@ def run(cmd: list[str], env: dict[str, str], dry_run: bool, cwd: Optional[str] =
 
 
 # ---------------------------------------------------------------------------
-# --with-reindex chain
+# Post-approve propagation chains (--with-reindex / --send-to-clients)
 # ---------------------------------------------------------------------------
-# `backfill_fhs` writes ScoringResult/ASR rows but leaves the index materialized
-# view stale and OpenSearch un-updated, so scored products don't reach consumer
-# search until two further manage.py commands run. The chain below makes that
-# propagation a single flag (opt-in, defaults off — see follow-up to PR #10).
+# The consumer search index is rebuilt from the *approved*-scores view
+# (`index_scored_view_command` reads that view), so propagation belongs to
+# `approve_scores`, not to scoring. `backfill_fhs` only writes UNAPPROVED
+# ScoringResult/ASR rows — those legitimately shouldn't reach consumer search
+# until an operator approves them. So:
 #
-# `backfill_fhs_and_refresh_view_command` already refreshes the view internally
-# (see bitewell/tasks/fhs.py:36), so for that command we only chain the reindex.
+#   backfill_fhs            → writes unapproved scores (no reindex)
+#   approve_scores          → the approval gate; --with-reindex here refreshes
+#                             the index materialized views and pushes the
+#                             approved-scores view to OpenSearch, and
+#                             --send-to-clients then publishes to clients.
+#
+# Both chains are opt-in (default off) and prod-only (dev OpenSearch isn't
+# wired, and client publish is a real external side effect).
 
 
 REINDEX_CHAIN_COMMANDS: dict[str, list[str]] = {
     # primary command → list of chained manage.py commands (in order)
-    "backfill_fhs": [
+    "approve_scores": [
         "refresh_fhs_view_for_index_command",
         "index_scored_view_command",
     ],
-    "backfill_fhs_and_refresh_view_command": [
-        "index_scored_view_command",
-    ],
+}
+
+# Scoring commands that write unapproved scores. Used only for a loud reminder
+# pointing operators at the approve_scores --with-reindex next step.
+BACKFILL_FHS_COMMANDS: set[str] = {
+    "backfill_fhs",
+    "backfill_fhs_and_refresh_view_command",
 }
 
 
 def run_reindex_chain(
     args: argparse.Namespace, ndo_env: dict[str, str]
 ) -> tuple[list[dict], Optional[str]]:
-    """Chain refresh + reindex after a successful scoring run.
+    """Chain refresh + reindex after a successful approve_scores run.
 
     Returns (steps, skip_reason). At most one is meaningful:
       - steps non-empty, skip_reason None → chain ran (each step records
@@ -552,6 +564,55 @@ def run_reindex_chain(
             )
             break
     return steps, None
+
+
+def run_send_to_clients_chain(
+    args: argparse.Namespace, ndo_env: dict[str, str], spaces_key: Optional[str]
+) -> tuple[list[dict], Optional[str]]:
+    """Publish approved scores to clients after a successful approve_scores.
+
+    Only fires when `--send-to-clients` is set. Reuses the same Spaces key that
+    approve_scores just consumed (it carries product_id, which send_to_clients
+    accepts as an id column). Modes:
+      - `all`    → send_to_clients -f <key>            (all clients on the rows)
+      - `select` → send_to_clients -f <key> -c <id>    (one named client)
+      - `requested` is rejected at parse time (no NDO concept for it yet).
+
+    Returns (steps, skip_reason) with the same contract as run_reindex_chain.
+    Auto-skips on --target dev — publishing to clients is a real external side
+    effect we only do against prod.
+    """
+    mode = args.send_to_clients
+    if not mode:
+        return [], None
+    if args.target == "dev":
+        return [], "--target dev (client publish is prod-only)"
+    if spaces_key is None:
+        return [], "no input file to publish"
+
+    cmd = ["poetry", "run", "python", "manage.py", "send_to_clients", "-f", spaces_key]
+    label = "all clients on the approved rows"
+    if mode == "select":
+        cmd += ["-c", args.client_id]
+        label = f"client {args.client_id}"
+
+    print(f"\n[chain] --send-to-clients: publishing to {label}", flush=True)
+    t0 = time.monotonic()
+    send_exit = run(cmd, ndo_env, args.dry_run)
+    step = {
+        "command": "send_to_clients",
+        "mode": mode,
+        "client_id": args.client_id if mode == "select" else None,
+        "exit_code": send_exit,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+    if send_exit != 0:
+        print(
+            f"[chain] send_to_clients failed (exit={send_exit})",
+            file=sys.stderr,
+            flush=True,
+        )
+    return [step], None
 
 
 # ---------------------------------------------------------------------------
@@ -779,16 +840,33 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--with-reindex",
         action="store_true",
         help=(
-            "After a successful `backfill_fhs` (or "
-            "`backfill_fhs_and_refresh_view_command`), chain "
+            "After a successful `approve_scores`, chain "
             "`refresh_fhs_view_for_index_command` + `index_scored_view_command` "
-            "so scored products propagate to OpenSearch consumer search. "
+            "so the approved scores propagate to OpenSearch consumer search. "
+            "The index is built from the approved-scores view, so this belongs "
+            "to approval, not scoring — `backfill_fhs` no longer reindexes. "
             "Auto-skipped on --target dev (dev OpenSearch not wired) or when "
-            "DO_OPENSEARCH_URL is unset. For "
-            "`backfill_fhs_and_refresh_view_command` only the reindex is "
-            "chained (the command refreshes the view itself). Audited in "
-            "--summary-out."
+            "DO_OPENSEARCH_URL is unset. Audited in --summary-out."
         ),
+    )
+    parser.add_argument(
+        "--send-to-clients",
+        choices=["all", "requested", "select"],
+        default=None,
+        help=(
+            "After a successful `approve_scores`, also publish the approved "
+            "scores to clients (chains `send_to_clients`). `all` = every client "
+            "on the approved rows; `select` = one client (requires --client-id). "
+            "`requested` (only clients who requested the product) is NOT yet "
+            "supported — NDO has no requested-client concept; tracked as a "
+            "future feature (ENG-895 area). Prod-only; auto-skipped on --target "
+            "dev. Audited in --summary-out."
+        ),
+    )
+    parser.add_argument(
+        "--client-id",
+        default=None,
+        help="Client id for `--send-to-clients select` (a single client).",
     )
     parser.add_argument(
         "--allow-large-batch",
@@ -805,6 +883,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ns.sync = ns.sync == "true"
     # Strip the literal `--` separator if present, then pass the rest through
     ns.extra = [a for a in unknown if a != "--"]
+
+    # --with-reindex / --send-to-clients now attach to the approval step only.
+    # Scoring no longer reindexes directly (the index is built from the
+    # approved-scores view), so reject the old backfill_fhs --with-reindex usage
+    # with a pointer to the new flow rather than silently no-op'ing.
+    if ns.with_reindex and ns.command not in REINDEX_CHAIN_COMMANDS:
+        allowed = ", ".join(sorted(REINDEX_CHAIN_COMMANDS))
+        parser.error(
+            f"--with-reindex is only valid for: {allowed} (got `{ns.command}`). "
+            f"Scoring no longer reindexes directly — approve first, then run "
+            f"`approve_scores --with-reindex`."
+        )
+    if ns.send_to_clients:
+        if ns.command != "approve_scores":
+            parser.error(
+                f"--send-to-clients is only valid for approve_scores "
+                f"(got `{ns.command}`)."
+            )
+        if ns.send_to_clients == "requested":
+            parser.error(
+                "--send-to-clients requested is not supported yet: NDO has no "
+                "'clients who requested' concept. Tracked as a future NDO "
+                "feature (ENG-895 area). Use `all` or `select` for now."
+            )
+        if ns.send_to_clients == "select" and not ns.client_id:
+            parser.error("--send-to-clients select requires --client-id <id>.")
     return ns
 
 
@@ -823,6 +927,8 @@ def write_summary(
     postflight_skipped_reason: str | None = None,
     reindex_chain_steps: list[dict] | None = None,
     reindex_chain_skipped_reason: str | None = None,
+    send_clients_steps: list[dict] | None = None,
+    send_clients_skipped_reason: str | None = None,
     batch_clamps: list[dict] | None = None,
 ) -> None:
     """Write a JSON run-summary file (best-effort; never raises)."""
@@ -840,6 +946,7 @@ def write_summary(
         "extra": args.extra,
         "dry_run": bool(args.dry_run),
         "with_reindex": bool(getattr(args, "with_reindex", False)),
+        "send_to_clients": getattr(args, "send_to_clients", None),
         "preflight": preflight_payload,
         "preflight_skipped_reason": preflight_skipped_reason,
         "postflight": postflight_payload,
@@ -847,6 +954,10 @@ def write_summary(
         "reindex_chain": {
             "steps": reindex_chain_steps or [],
             "skipped_reason": reindex_chain_skipped_reason,
+        },
+        "send_to_clients_chain": {
+            "steps": send_clients_steps or [],
+            "skipped_reason": send_clients_skipped_reason,
         },
         "batch_clamps": batch_clamps or [],
     }
@@ -871,6 +982,8 @@ def main(argv: list[str] | None = None) -> int:
     postflight_skipped_reason: str | None = None
     reindex_chain_steps: list[dict] = []
     reindex_chain_skipped_reason: str | None = None
+    send_clients_steps: list[dict] = []
+    send_clients_skipped_reason: str | None = None
     batch_clamps: list[dict] = []
 
     try:
@@ -968,9 +1081,10 @@ def main(argv: list[str] | None = None) -> int:
         elif postflight_skipped_reason and not args.dry_run:
             print(f"[postflight] skipped: {postflight_skipped_reason}", flush=True)
 
-        # --with-reindex chain: only fires for scoring commands and only when
-        # the primary run succeeded. See REINDEX_CHAIN_COMMANDS for the per-
-        # command chain definition.
+        # Post-approve propagation. --with-reindex rebuilds the index views and
+        # pushes the approved-scores view to OpenSearch; --send-to-clients then
+        # publishes the approved scores to clients. Both fire only after a
+        # successful approve_scores run (see REINDEX_CHAIN_COMMANDS).
         if args.with_reindex:
             if exit_code != 0:
                 reindex_chain_skipped_reason = (
@@ -996,17 +1110,58 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     if failed is not None:
                         exit_code = failed["exit_code"]
-        elif exit_code == 0 and args.command in REINDEX_CHAIN_COMMANDS:
-            # Loud no-op reminder: scoring landed in Postgres but consumer
-            # search won't see it until refresh + reindex run. Mirrors the
-            # "Known Gaps" follow-up from PR #10.
-            remaining = ", ".join(REINDEX_CHAIN_COMMANDS[args.command])
-            print(
-                f"\nNOTE: `{args.command}` succeeded but scored products are NOT "
-                f"yet in OpenSearch.\n  Rerun with --with-reindex, or manually "
-                f"run: {remaining}\n",
-                flush=True,
-            )
+
+        if args.send_to_clients:
+            if exit_code != 0:
+                send_clients_skipped_reason = (
+                    f"prior step exited {exit_code}; skipped client publish"
+                )
+                print(
+                    f"[chain] --send-to-clients: {send_clients_skipped_reason}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                send_clients_steps, send_clients_skipped_reason = (
+                    run_send_to_clients_chain(args, ndo_env, spaces_key)
+                )
+                if send_clients_skipped_reason:
+                    print(
+                        f"[chain] --send-to-clients: skipped "
+                        f"({send_clients_skipped_reason})",
+                        flush=True,
+                    )
+                else:
+                    failed = next(
+                        (s for s in send_clients_steps if s["exit_code"] != 0), None
+                    )
+                    if failed is not None:
+                        exit_code = failed["exit_code"]
+
+        # Loud reminders when a propagation step was NOT requested, so the gap
+        # between "written to Postgres" and "visible to consumers/clients" is
+        # never silent.
+        if exit_code == 0 and not args.dry_run:
+            if args.command == "approve_scores" and not args.with_reindex:
+                remaining = ", ".join(REINDEX_CHAIN_COMMANDS["approve_scores"])
+                extra = (
+                    "" if args.send_to_clients else
+                    "  Add --send-to-clients all|select to also publish to clients.\n"
+                )
+                print(
+                    f"\nNOTE: `approve_scores` succeeded but the approved scores "
+                    f"are NOT yet in OpenSearch consumer search.\n  Rerun with "
+                    f"--with-reindex, or manually run: {remaining}\n{extra}",
+                    flush=True,
+                )
+            elif args.command in BACKFILL_FHS_COMMANDS:
+                print(
+                    f"\nNOTE: `{args.command}` wrote scores but they are "
+                    f"UNAPPROVED and not searchable.\n  Next: `approve_scores "
+                    f"--with-reindex` to approve, rebuild the index, and push to "
+                    f"OpenSearch (add --send-to-clients to also publish).\n",
+                    flush=True,
+                )
 
         return exit_code
     finally:
@@ -1025,6 +1180,8 @@ def main(argv: list[str] | None = None) -> int:
                 postflight_skipped_reason=postflight_skipped_reason,
                 reindex_chain_steps=reindex_chain_steps,
                 reindex_chain_skipped_reason=reindex_chain_skipped_reason,
+                send_clients_steps=send_clients_steps,
+                send_clients_skipped_reason=send_clients_skipped_reason,
                 batch_clamps=batch_clamps,
             )
 

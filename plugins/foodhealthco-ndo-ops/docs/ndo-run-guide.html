@@ -1,0 +1,484 @@
+<title>ndo-run — Scoring Ops Reference for Dietitians</title>
+<style>
+  :root{
+    --ground:#FBFBF8;
+    --panel:#FFFFFF;
+    --ink:#1B241F;
+    --ink-soft:#4C574F;
+    --ink-faint:#7A857C;
+    --accent:#2F6B4F;
+    --accent-soft:#EAF1EC;
+    --accent-line:#CFE0D4;
+    --caution:#B4741A;
+    --caution-soft:#FBF1E2;
+    --danger:#A6402F;
+    --danger-soft:#F8EAE6;
+    --line:#E4E6DF;
+    --line-strong:#D3D6CC;
+    --code-bg:#1C2621;
+    --code-ink:#E7EDE7;
+    --serif:Georgia,'Iowan Old Style','Times New Roman',serif;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    --mono:ui-monospace,'SF Mono',Menlo,'Cascadia Mono','Roboto Mono',monospace;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+  /* ---- header ---- */
+  header.masthead{padding:56px 0 30px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(30px,5vw,46px);line-height:1.08;margin:14px 0 10px;text-wrap:balance;letter-spacing:-.01em}
+  .lede{font-size:18px;color:var(--ink-soft);max-width:60ch;margin:0}
+  .credit{margin-top:18px;font-size:13px;color:var(--ink-faint);font-family:var(--mono)}
+
+  /* ---- sticky toolbar ---- */
+  .toolbar{position:sticky;top:0;z-index:20;background:rgba(251,251,248,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .toolbar .wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding-top:12px;padding-bottom:12px}
+  .search{flex:1 1 240px;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line-strong);border-radius:8px;padding:8px 12px}
+  .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .search input{border:0;outline:0;flex:1;font-size:15px;font-family:var(--sans);background:transparent;color:var(--ink)}
+  .search svg{flex:0 0 auto;color:var(--ink-faint)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-family:var(--mono);font-size:12px;letter-spacing:.03em;border:1px solid var(--line-strong);background:var(--panel);color:var(--ink-soft);padding:6px 11px;border-radius:999px;cursor:pointer;transition:.12s}
+  .chip:hover{border-color:var(--accent);color:var(--accent)}
+  .chip[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .chip.danger[aria-pressed="true"]{background:var(--danger);border-color:var(--danger)}
+
+  /* ---- sections ---- */
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;padding-top:6px}
+  h2{font-family:var(--serif);font-size:27px;font-weight:600;margin:0;letter-spacing:-.01em}
+  .sec-head p{margin:4px 0 0;color:var(--ink-soft);font-size:15px}
+
+  /* ---- tldr ---- */
+  .tldr{background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:12px;padding:24px 26px;display:grid;gap:14px}
+  .tldr p{margin:0;font-size:16px}
+  .tldr .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-family:var(--mono);font-size:13px}
+  .tldr .step{background:var(--panel);border:1px solid var(--accent-line);border-radius:7px;padding:6px 11px}
+  .tldr .arrow{color:var(--accent);font-weight:700}
+
+  /* ---- plain english table ---- */
+  .say{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .say .cell{background:var(--panel);padding:14px 18px}
+  .say .h{background:var(--ground);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);padding:10px 18px;font-weight:600}
+  .say .q{font-style:italic;color:var(--ink);font-size:15px}
+  .say .a code{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600}
+
+  /* ---- guardrails ---- */
+  .rails{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  .rail{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:9px;padding:16px 18px}
+  .rail.warn{border-left-color:var(--caution)}
+  .rail.stop{border-left-color:var(--danger)}
+  .rail h3{margin:0 0 5px;font-size:15px;font-family:var(--sans);font-weight:650;display:flex;align-items:center;gap:8px}
+  .rail .tag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:5px;background:var(--accent-soft);color:var(--accent);font-weight:700}
+  .rail.warn .tag{background:var(--caution-soft);color:var(--caution)}
+  .rail.stop .tag{background:var(--danger-soft);color:var(--danger)}
+  .rail p{margin:0;font-size:14px;color:var(--ink-soft)}
+  .rail code{font-family:var(--mono);font-size:12.5px;background:var(--ground);padding:1px 5px;border-radius:4px;color:var(--ink)}
+
+  /* ---- command reference ---- */
+  .count{font-family:var(--mono);font-size:13px;color:var(--ink-faint);margin-bottom:16px}
+  .cmds{display:grid;gap:10px}
+  .cmd{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:border-color .12s}
+  .cmd:hover{border-color:var(--line-strong)}
+  .cmd.open{border-color:var(--accent-line)}
+  .cmd summary{list-style:none;cursor:pointer;padding:15px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .cmd summary::-webkit-details-marker{display:none}
+  .cmd .name{font-family:var(--mono);font-size:14.5px;font-weight:600;color:var(--ink)}
+  .cmd .plain{color:var(--ink-soft);font-size:14px;flex:1 1 200px}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .b{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:5px;font-weight:700;white-space:nowrap}
+  .b.solo{background:var(--accent-soft);color:var(--accent)}
+  .b.qa{background:var(--caution-soft);color:var(--caution)}
+  .b.eng{background:#ECEEF0;color:#5A6470}
+  .b.dstr{background:var(--danger-soft);color:var(--danger)}
+  .b.pre{background:var(--ground);color:var(--ink-faint);border:1px solid var(--line)}
+  .cmd .body{padding:0 18px 18px;border-top:1px solid var(--line);margin-top:0;display:grid;gap:14px;padding-top:16px}
+  .cmd .row{display:grid;grid-template-columns:120px 1fr;gap:8px;font-size:14px}
+  .cmd .row .k{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);padding-top:2px}
+  .cmd .row .v{color:var(--ink)}
+  .cmd .row .v code{font-family:var(--mono);font-size:12.5px;background:var(--ground);padding:1px 5px;border-radius:4px}
+  .note{font-size:13.5px;color:var(--ink-soft);background:var(--ground);border-radius:7px;padding:11px 13px}
+  .cmd.hidden{display:none}
+  .empty{text-align:center;color:var(--ink-faint);font-family:var(--mono);font-size:14px;padding:40px 0}
+
+  /* ---- code block ---- */
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:18px 20px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.6;margin:0}
+  pre .c{color:#8FB89C}
+  pre .f{color:#E0C98A}
+
+  /* ---- do / dont ---- */
+  .dd{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .dd .col{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--panel)}
+  .dd .col h3{margin:0;padding:14px 18px;font-size:15px;font-family:var(--sans);font-weight:650;display:flex;align-items:center;gap:8px}
+  .dd .go h3{background:var(--accent-soft);color:var(--accent)}
+  .dd .stop h3{background:var(--danger-soft);color:var(--danger)}
+  .dd ul{margin:0;padding:14px 18px 16px 20px;display:grid;gap:9px}
+  .dd li{font-size:14px;color:var(--ink-soft)}
+  .dd li strong{color:var(--ink);font-weight:600}
+  .dd code{font-family:var(--mono);font-size:12.5px;background:var(--ground);padding:1px 5px;border-radius:4px}
+
+  /* ---- glossary / trouble ---- */
+  .acc{display:grid;gap:8px}
+  details.item{background:var(--panel);border:1px solid var(--line);border-radius:9px}
+  details.item summary{cursor:pointer;padding:13px 16px;font-weight:600;font-size:14.5px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  details.item summary::-webkit-details-marker{display:none}
+  details.item summary::after{content:"+";font-family:var(--mono);color:var(--accent);font-size:18px}
+  details.item[open] summary::after{content:"–"}
+  details.item .in{padding:0 16px 15px;font-size:14px;color:var(--ink-soft)}
+  details.item .in code{font-family:var(--mono);font-size:12.5px;background:var(--ground);padding:1px 5px;border-radius:4px}
+  dl.gloss{display:grid;gap:0;margin:0}
+  dl.gloss div{display:grid;grid-template-columns:170px 1fr;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+  dl.gloss div:first-child{border-top:0}
+  dl.gloss dt{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--accent)}
+  dl.gloss dd{margin:0;font-size:14px;color:var(--ink-soft)}
+
+  footer{padding:34px 0 60px;color:var(--ink-faint);font-size:13px}
+  footer a{color:var(--accent)}
+  a.tl{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-line)}
+
+  @media(max-width:680px){
+    .say,.dd{grid-template-columns:1fr}
+    .cmd .row{grid-template-columns:1fr}
+    dl.gloss div{grid-template-columns:1fr}
+    h1{font-size:30px}
+  }
+  @media print{.toolbar{display:none}.cmd .body{display:grid!important}details.item .in{display:block!important}}
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="eyebrow">ndo-run · scoring ops reference</div>
+    <h1>Score, tag &amp; publish products — by asking Claude, not the droplet</h1>
+    <p class="lede">A plain-English reference to everything the <code>foodhealthco-ndo-ops</code> plugin can do, what it won't let you do, and the guardrails that keep prod safe. Built for dietitians.</p>
+    <div class="credit">19 commands · dev-first by default · every write previewed before it runs</div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="wrap">
+    <label class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="q" type="search" placeholder="Search commands — “score”, “tag”, “publish”, “delete”…" aria-label="Search commands">
+    </label>
+    <div class="chips" id="chips">
+      <button class="chip" data-cat="all" aria-pressed="true">All</button>
+      <button class="chip" data-cat="score" aria-pressed="false">Score &amp; search</button>
+      <button class="chip" data-cat="tag" aria-pressed="false">Tag &amp; categorize</button>
+      <button class="chip" data-cat="fill" aria-pressed="false">Fill in data</button>
+      <button class="chip" data-cat="products" aria-pressed="false">Products in/out</button>
+      <button class="chip" data-cat="publish" aria-pressed="false">Approve &amp; publish</button>
+      <button class="chip danger" data-flag="destructive" aria-pressed="false">⚠ Destructive only</button>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <!-- TLDR -->
+  <section id="tldr">
+    <div class="tldr">
+      <p><strong>The whole thing in one breath:</strong> after a one-time setup, you tell Claude in plain English what you want — <em>“re-tag and re-score these 5 products”</em>. Claude picks the right command, shows you exactly what it's about to change, waits for your OK (and makes you type <code>prod</code> for live writes), runs it, then verifies the changes actually landed.</p>
+      <div class="flow">
+        <span class="step">You ask in English</span><span class="arrow">→</span>
+        <span class="step">Preflight preview</span><span class="arrow">→</span>
+        <span class="step">You approve</span><span class="arrow">→</span>
+        <span class="step">Run</span><span class="arrow">→</span>
+        <span class="step">Postflight verify</span>
+      </div>
+      <p style="font-size:14px;color:var(--ink-soft);margin-top:2px">No SSH, no droplet console, no <code>manage.py</code> to memorize. You never touch a command line — you just talk to Claude, and it drives the plugin for you.</p>
+    </div>
+  </section>
+
+  <!-- HOW TO ASK -->
+  <section id="ask">
+    <div class="sec-head"><span class="sec-num">01</span><div><h2>How to ask</h2><p>You describe the intent; Claude maps it to the right command. You don't need to know these names.</p></div></div>
+    <div class="say">
+      <div class="h">You say…</div><div class="h">Claude runs…</div>
+      <div class="cell q">“Score these products” / “compute the FHS”</div><div class="cell a"><code>backfill_fhs</code></div>
+      <div class="cell q">“Tag these products” / “apply the tags”</div><div class="cell a"><code>backfill_tags</code></div>
+      <div class="cell q">“Fill in the missing calories / macros”</div><div class="cell a"><code>backfill_imputation</code></div>
+      <div class="cell q">“Make me a QA score report for review”</div><div class="cell a"><code>generate_qa_report</code></div>
+      <div class="cell q">“Approve these scores”</div><div class="cell a"><code>approve_scores</code></div>
+      <div class="cell q">“Approve and make them searchable in the app”</div><div class="cell a"><code>approve_scores --with-reindex</code></div>
+      <div class="cell q">“Approve, reindex, and publish to all clients”</div><div class="cell a"><code>approve_scores --with-reindex --send-to-clients all</code></div>
+      <div class="cell q">“Send / publish scores to the client”</div><div class="cell a"><code>send_to_clients</code></div>
+      <div class="cell q">“Safely remove these products”</div><div class="cell a"><code>remove_products_and_scores</code></div>
+    </div>
+    <p style="font-size:14px;color:var(--ink-soft);margin-top:14px">Two ways to point at products: <strong>paste the IPM IDs</strong> (<em>“…for IDs 3067665, 3067666”</em>) or name a <strong>source</strong> (<em>“…for source tyson_20260521”</em>). If your intent is ambiguous, Claude asks before running anything.</p>
+  </section>
+
+  <!-- GUARDRAILS -->
+  <section id="rails">
+    <div class="sec-head"><span class="sec-num">02</span><div><h2>Guardrails</h2><p>What stops a mistake from reaching production. These are on by default — you don't enable them.</p></div></div>
+    <div class="rails">
+      <div class="rail"><h3><span class="tag">default</span> Dev-first</h3><p>Every new op starts on <code>--target dev</code>, a throwaway database. You move to prod only once dev looks right.</p></div>
+      <div class="rail warn"><h3><span class="tag">confirm</span> Type-to-confirm prod</h3><p>Any live write pauses and makes you literally type <code>prod</code> to continue. There is no silent prod write.</p></div>
+      <div class="rail"><h3><span class="tag">preview</span> Preflight</h3><p>Before any write, Claude buckets every input ID: <code>✓ update</code>, <code>↻ skip</code>, or <code>✗ block</code> (a precondition failed). You see the damage before it happens.</p></div>
+      <div class="rail"><h3><span class="tag">verify</span> Postflight</h3><p>After a run, Claude re-queries the DB to confirm the writes landed. If it reports <strong>drift</strong> (“expected 5, observed 3”), something silently failed — screenshot it, that's a real bug.</p></div>
+      <div class="rail"><h3><span class="tag">safe</span> Dry-run anything</h3><p>Ask for a dry-run and Claude shows the exact command + preflight <em>without writing a thing</em>. Always safe, on any command.</p></div>
+      <div class="rail warn"><h3><span class="tag">limit</span> Batch clamp</h3><p>Batches above <code>1000</code> are clamped with a loud warning — a huge list can drop the scoring DB connection (ENG-965). Overridable only on purpose with <code>--allow-large-batch</code>.</p></div>
+      <div class="rail"><h3><span class="tag">sync</span> Runs synchronously</h3><p>Defaults to <code>--sync true</code> so results are real by the time the run finishes — no waiting on a background worker to pick up the job.</p></div>
+      <div class="rail warn"><h3><span class="tag">loud</span> Propagation reminder</h3><p>App search is built from <em>approved</em> scores, so it updates at approval — <code>approve_scores --with-reindex</code>. Skip the flag and Claude reminds you rather than leaving a silent gap; scoring alone won't reach search.</p></div>
+      <div class="rail stop"><h3><span class="tag">blocked</span> HeroDB writes</h3><p><code>--db platform</code> is blocked pending ENG-897. It needs an explicit <code>--force</code> and still only does a single-DB swap. Leave it to eng.</p></div>
+      <div class="rail stop"><h3><span class="tag">audit</span> Delete needs a paper trail</h3><p>Destructive commands require a <strong>reason</strong> and <strong>operator</strong> note, and archive rather than hard-delete. Do dry-runs on dev first.</p></div>
+    </div>
+  </section>
+
+  <!-- COMMAND REFERENCE -->
+  <section id="ref">
+    <div class="sec-head"><span class="sec-num">03</span><div><h2>Command reference</h2><p>All 19 commands. Search or filter above; click any card to expand. Legend: <span class="b solo" style="vertical-align:middle">RD solo</span> you can run it · <span class="b qa" style="vertical-align:middle">after QA</span> review first · <span class="b eng" style="vertical-align:middle">eng</span> ask engineering · <span class="b dstr" style="vertical-align:middle">destructive</span> · <span class="b pre" style="vertical-align:middle">preflight</span>.</p></div>
+    <div class="count" id="count"></div>
+    <div class="cmds" id="cmds"></div>
+    <div class="empty hidden" id="empty">No commands match — try clearing the search or filter.</div>
+  </section>
+
+  <!-- DO / DONT -->
+  <section id="scope">
+    <div class="sec-head"><span class="sec-num">04</span><div><h2>What you can &amp; can't do solo</h2><p>The full scoring → publish chain is yours. A few things route to engineering.</p></div></div>
+    <div class="dd">
+      <div class="col go">
+        <h3>✓ You can run these yourself</h3>
+        <ul>
+          <li><strong>Tag, impute &amp; score</strong> — <code>backfill_tags</code>, <code>backfill_imputation</code>, <code>backfill_fhs</code> on a set of IDs or one source, dev or prod.</li>
+          <li><strong>QA report</strong> — <code>generate_qa_report</code>, then <em>review the xlsx before approving</em>.</li>
+          <li><strong>Approve scores</strong> — <code>approve_scores</code>, only once the QA review looks right.</li>
+          <li><strong>Publish to clients</strong> — <code>send_to_clients</code>, the irreversible end of the chain.</li>
+          <li><strong>Dry-run anything</strong> — always safe, no writes.</li>
+        </ul>
+      </div>
+      <div class="col stop">
+        <h3>✗ Ask engineering for these</h3>
+        <ul>
+          <li><strong>New source from scratch</strong> — creating IPM rows from raw vendor data (<code>create_products</code> / <code>bulk_create_products</code>).</li>
+          <li><strong>Archive / delete</strong> — <code>remove_products_and_scores</code>, <code>archive_table</code>. Destructive.</li>
+          <li><strong>Any credential error</strong> — <code>InvalidAccessKeyId</code> or “permission denied” after a retry.</li>
+          <li><strong>Any postflight drift &gt; 0</strong> — writes that didn't land. Worth investigating.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORKED EXAMPLE -->
+  <section id="example">
+    <div class="sec-head"><span class="sec-num">05</span><div><h2>A worked example</h2><p>Re-tag and re-score 5 products you just edited in admin — the everyday recipe.</p></div></div>
+    <div class="acc" style="margin-bottom:18px">
+      <details class="item" open><summary>What you type into Claude</summary><div class="in">
+        <p style="margin:0 0 8px">Just talk. In order:</p>
+        <ol style="margin:0;padding-left:20px;display:grid;gap:6px">
+          <li><em>“Dry-run backfill_tags against dev for IPM IDs 3067665,3067666,3067667,3067668,3067669”</em></li>
+          <li><em>“Run backfill_tags against prod for those IDs”</em> → type <code>prod</code> to confirm</li>
+          <li><em>“Dry-run backfill_fhs against dev for those same IDs”</em></li>
+          <li><em>“Run backfill_fhs against prod for those IDs”</em></li>
+          <li><em>“Generate a QA score report for those IDs”</em></li>
+        </ol>
+      </div></details>
+      <details class="item"><summary>What a preflight looks like</summary><div class="in">
+<pre><span class="c">Pre-flight: backfill_tags</span>
+  Target: 🟢 NDO dev
+  Input: 5 product_ids
+
+Will WRITE:
+  <span class="f">✓  5</span>  Will tag  (TaggingJob runs with overwrite=True)
+
+Will SKIP (precondition fails):
+  ✗  0  No ingredients_text
+  ✗  0  Not in IPM
+
+<span class="c">[dry-run] not executing</span></pre>
+      </div></details>
+      <details class="item"><summary>What a postflight looks like</summary><div class="in">
+<pre><span class="c">Post-flight: backfill_tags</span>
+  ✅ all 5 expected writes landed
+  source: ingestion_productmatch.updated_at &gt;= 2026-05-22T14:15:32+00:00</pre>
+        <p style="margin:10px 0 0">If it says <code>⚠ drift — expected 5, observed 3</code>, two products didn't get tagged. Screenshot and send to eng.</p>
+      </div></details>
+    </div>
+    <p style="font-size:14px;color:var(--ink-soft)"><strong>The under-the-hood command</strong> (Claude runs this for you — shown so you recognize it in output):</p>
+<pre>cd ~/Code/meltano-elt-pipelines
+poetry run <span class="f">--</span> python .../ndo-run/scripts/ndo_run.py backfill_fhs \
+  --ids 3067665,3067666 --target prod</pre>
+    <p style="font-size:13px;color:var(--ink-faint);margin-top:10px">The literal <code>--</code> after <code>poetry run</code> matters — without it Poetry eats the <code>--csv</code>/<code>--ids</code> flag. Claude handles this; you never type it.</p>
+  </section>
+
+  <!-- GLOSSARY -->
+  <section id="glossary">
+    <div class="sec-head"><span class="sec-num">06</span><div><h2>Glossary</h2></div></div>
+    <dl class="gloss">
+      <div><dt>IPM ID</dt><dd>“Ingestion Product Match” — a row in <code>ingestion_productmatch</code>. Its <code>id</code> is the number most commands want.</dd></div>
+      <div><dt>FHS</dt><dd>Food Health Score (0–100), computed by the FHS API from nutrients + ingredients + tags.</dd></div>
+      <div><dt>Source</dt><dd>The vendor + ingestion batch a product belongs to, e.g. <code>tyson_20260521</code>, <code>nielsen</code>, <code>kroger</code>. Lets you target a whole batch at once.</dd></div>
+      <div><dt>ScoringResult</dt><dd>A computed FHS awaiting approval — created by <code>backfill_fhs</code>.</dd></div>
+      <div><dt>ApprovedScoringResult</dt><dd>An approved score, ready to publish — created by <code>approve_scores</code>. This is what reaches clients.</dd></div>
+      <div><dt>Tagging (t2t)</dt><dd>Text2Tag: reads ingredient text and sets flags like <code>is_deep_fried</code>, <code>is_artificial_colors</code>. Rules live in <code>t2t_v4.csv</code>.</dd></div>
+      <div><dt>Preflight / Postflight</dt><dd>The preview before a write / the verification after it. Together they catch mistakes and silent failures.</dd></div>
+      <div><dt>Dry-run</dt><dd>Preview only — prints what would happen, writes nothing. Always safe.</dd></div>
+      <div><dt>dev / prod</dt><dd>Which database you're talking to. Dev = safe rehearsal. Prod = the live one.</dd></div>
+    </dl>
+  </section>
+
+  <!-- TROUBLESHOOTING -->
+  <section id="trouble" style="border-bottom:0">
+    <div class="sec-head"><span class="sec-num">07</span><div><h2>Troubleshooting</h2></div></div>
+    <div class="acc">
+      <details class="item"><summary>“InvalidAccessKeyId” when uploading</summary><div class="in">Your DO Spaces keys in <code>.env</code> can't write to the <code>btw-nutrition</code> bucket (the <code>backfills-test</code> keys don't work). Ask eng for the prod-write keys (1Password: “DO Spaces — btw-nutrition prod write”).</div></details>
+      <details class="item"><summary>Tagging says “100%” but no tags actually applied</summary><div class="in">Almost always <code>DEFAULT_TAGGING_FILE</code> isn't set to <code>t2t_v4.csv</code> in your <code>.env</code>. Watch for a WARN line “Tagging will run with NO RULES”. Match whatever prod currently uses.</div></details>
+      <details class="item"><summary>Postflight shows drift</summary><div class="in">Some writes didn't land (“expected N, observed M”, M&lt;N). Usual causes: the FHS API rejected items mid-batch for missing data (look for 4xx in the output), or a DB constraint. Screenshot the postflight and send to eng.</div></details>
+      <details class="item"><summary>Preflight shows “✗ Not in IPM”</summary><div class="in">Those IDs don't exist on the target DB. Usual reasons: a typo, you're on dev but the IDs are from prod (dev has older data), or the product was archived. On dev this is normal — proceed.</div></details>
+      <details class="item"><summary>“no preflight implementation for X”</summary><div class="in">That command doesn't have a preview/verify step yet — it still works, just without the safety preview. 12 of 19 commands have preflight today. Ask in #platform if you need one added.</div></details>
+      <details class="item"><summary>Claude doesn't seem to use the plugin</summary><div class="in">In Claude Code run <code>/plugin list</code> — you should see <code>foodhealthco-ndo-ops</code> enabled. If not, reinstall and restart Claude Code.</div></details>
+    </div>
+  </section>
+
+  <footer>
+    Source of truth: <a href="https://github.com/bitewell/foodhealthco-claude-code-plugins">bitewell/foodhealthco-claude-code-plugins</a> · skill <code>ndo-run</code> · full command spec in <code>catalog.yaml</code>. Questions → <strong>#platform</strong>. This page mirrors the skill as of July 2026 — the plugin is the authority if they ever disagree.
+  </footer>
+</main>
+
+<script>
+const COMMANDS = [
+  // --- Score & search ---
+  {n:"backfill_fhs",cat:"score",plain:"Score products with the FHS",rd:"solo",pre:true,dstr:false,
+   input:"IDs / CSV, or a whole source", args:"-s source, -f file, -b batch (default 250)",
+   note:"The core scoring command. Writes UNAPPROVED ScoringResult rows via the FHS API. It does NOT make products searchable — the app index is built from approved scores, so reindexing happens later at approval (approve_scores --with-reindex). After a run, Claude reminds you of that next step."},
+  {n:"backfill_fhs_and_refresh_view_command",cat:"score",plain:"Score a whole source AND refresh the index view",rd:"solo",pre:false,dstr:false,
+   input:"one or more sources (no CSV)", args:"-s source [source …], -sy sync",
+   note:"Use when new profiles land for an entire source. Scores, then refreshes the index materialized view internally. Still writes unapproved scores — reindex to OpenSearch + client publish happen at approval via approve_scores."},
+  {n:"refresh_fhs_view_for_index_command",cat:"score",plain:"Refresh the index view (no scoring)",rd:"eng",pre:false,dstr:false,
+   input:"none", args:"-sy sync",
+   note:"Step 2 of the search-propagation chain — pairs with backfill_fhs. Normally chained automatically by --with-reindex; rarely run by hand."},
+  {n:"index_scored_view_command",cat:"score",plain:"Rebuild the app's OpenSearch index",rd:"eng",pre:false,dstr:false,
+   input:"none", args:"-sy sync",
+   note:"Step 3 of the chain — rebuilds the consumer search index from the refreshed view. Normally chained by --with-reindex."},
+  {n:"generate_qa_report",cat:"score",plain:"Make an RD-facing QA score xlsx",rd:"solo",pre:false,dstr:false,
+   input:"IDs / CSV, or a source", args:"-s source, -f files",
+   note:"Runs fhs-app's report generator — a spreadsheet of scored vs. unscorable products for review. Lands in fhs-app/output_scores/. This is your review artifact before approving. (Not the same as the vendor export generate_scores.)"},
+  {n:"backfill_detailed_fhs_norms",cat:"score",plain:"Backfill detailed FHS norm values",rd:"qa",pre:true,dstr:false,
+   input:"CSV (required)", args:"-f file (required)",
+   note:"For specific products only. CSV must contain product_id, id, or product_match_id."},
+
+  // --- Tag & categorize ---
+  {n:"backfill_tags",cat:"tag",plain:"Apply AI tags (Text2Tag) to products",rd:"solo",pre:true,dstr:false,
+   input:"IDs / CSV, or a source", args:"-s source, -f file, -sy sync",
+   note:"Sets flags like is_deep_fried, is_artificial_colors from ingredient text. Overwrites existing tags. Batch size fixed at 300. Needs DEFAULT_TAGGING_FILE=t2t_v4.csv set."},
+  {n:"backfill_categories",cat:"tag",plain:"Categorize products via the swap model",rd:"qa",pre:true,dstr:false,
+   input:"IDs / CSV, or a source", args:"-bs batch (default 128), -o overwrite",
+   note:"Uses the BentoML category model. -o true overwrites existing categories. Needs CATEGORY_ENDPOINT_URL/TOKEN in .env."},
+  {n:"text2tag_qa",cat:"tag",plain:"Run tagging QA over a CSV (no DB changes)",rd:"qa",pre:false,dstr:false,
+   input:"CSV with ingredients_text + product_name", args:"-o output_key (required), -t tagging_file, -d detailed",
+   note:"Tags an arbitrary CSV and writes the tagged result back to Spaces — nothing in the DB changes. Good for testing tag rules on a sample."},
+
+  // --- Fill in data ---
+  {n:"backfill_imputation",cat:"fill",plain:"Impute missing calories, fat, protein, carbs, sugars",rd:"solo",pre:true,dstr:false,
+   input:"IDs / CSV, or a source", args:"-s source, -f file, --sync",
+   note:"Fills gaps in macros so a product becomes scorable. Run before backfill_fhs if the QA report flags missing nutrients."},
+  {n:"backfill_ni_profiles",cat:"fill",plain:"Copy CSV fields onto product records",rd:"qa",pre:true,dstr:false,
+   input:"CSV (required)", args:"-if include_fields, -ef exclude_fields, -t target_column",
+   note:"Field-based copy from a CSV onto ProductMatch rows. -t picks the identifier column; -if/-ef limit which columns are copied."},
+  {n:"backfill_proxy_match",cat:"fill",plain:"Copy proxy-match relationships from a CSV",rd:"qa",pre:true,dstr:false,
+   input:"CSV with a copy_from_id column", args:"-t target_column",
+   note:"Sets 'this product borrows its data from that product' links. CSV must have copy_from_id alongside the identifier."},
+
+  // --- Products in/out ---
+  {n:"create_products",cat:"products",plain:"Create IPM rows from a source's resolved input",rd:"eng",pre:false,dstr:false,
+   input:"one or more sources", args:"-s sources, -l limit, -m match",
+   note:"Programmatic alternative to a manual INSERT. -m True runs the waterfall match after creating. New-source ingestion is an eng task."},
+  {n:"bulk_create_products",cat:"products",plain:"Create IPM rows from a CSV upload (vendor batch)",rd:"eng",pre:true,dstr:false,
+   input:"CSV with product_name, brand_name, gtin", args:"-s source (required), -m match",
+   note:"Vendor-batch ingestion. Every row needs a gtin (synthetic ok). Idempotent on (gtin, source). Rows stamped api_match_stage='manual_review'. -m True waterfall-matches after. Eng-owned."},
+  {n:"match_products",cat:"products",plain:"Retry waterfall matching for a source",rd:"eng",pre:false,dstr:false,
+   input:"one or more sources (no CSV)", args:"-l limit, -st stages, -as api_stages",
+   note:"Re-runs Nielsen / Nutritionix / USDA / scraped matching. -st overrides which stages run."},
+  {n:"remove_products_and_scores",cat:"products",plain:"Safely archive products + their scores",rd:"eng",pre:true,dstr:true,
+   input:"CSV of ids", args:"-r reason (required), -o operator (required)",
+   note:"Archives (not hard-deletes) IPM rows plus their score rows. All of -f, -r, -o are required. Destructive — dev dry-run first, and loop in eng."},
+  {n:"archive_table",cat:"products",plain:"Generic archive of any table's rows by ID",rd:"eng",pre:true,dstr:true,
+   input:"CSV with an id column", args:"-m model, -r reason, -om operator, -ot delete|update (all required)",
+   note:"The general form of remove_products_and_scores — works on productmatch, foringestion, scoringresult, or approvedscoringresult. CSV must use id (not product_id). Destructive; eng-owned."},
+  {n:"generate_scores",cat:"products",plain:"Export a vendor's approved FHS values to xlsx",rd:"qa",pre:false,dstr:false,
+   input:"a vendor code", args:"-v vendor_code",
+   note:"Exports already-approved scores for one vendor as ooh_fhs_for_{vendor}.xlsx. Takes a vendor, not product IDs. (For an RD review report, use generate_qa_report instead.)"},
+
+  // --- Approve & publish ---
+  {n:"retrieve_data_cache",cat:"publish",plain:"Bridge pending ingestion rows into IPM",rd:"eng",pre:false,dstr:false,
+   input:"none (batch-driven)", args:"-a amount (default 256)",
+   note:"Pulls Pending rows from the ingestion table into IPM, splitting match vs. direct-ingest. Processes across all clients — not source-filterable. Eng-owned."},
+  {n:"approve_scores",cat:"publish",plain:"Approve scores — and optionally reindex + publish",rd:"qa",pre:true,dstr:false,
+   input:"CSV with fhs + product_id", args:"-f file, --with-reindex, --send-to-clients all|select, --client-id",
+   note:"Turns ScoringResults into ApprovedScoringResults — the gate for what reaches clients and search. CSV must have both fhs and product_id. Run only after the QA report looks right. This is also the propagation entry point: add --with-reindex to rebuild the index views + push to OpenSearch (prod only), and --send-to-clients all (every client on the rows) or select --client-id N (one client) to publish in the same step. 'Clients who requested' is a planned option, not built yet. Batch size fixed at 300."},
+  {n:"send_to_clients",cat:"publish",plain:"Publish approved scores to clients",rd:"solo",pre:true,dstr:false,
+   input:"CSV of ids", args:"-c client_id (optional)",
+   note:"The irreversible end of the chain — pushes approved scores live to clients. Omit -c to publish to all clients matching the rows. Runs synchronously."},
+  {n:"publish_scores_to_client",cat:"publish",plain:"Push a curated CSV of scores straight to the FHS API",rd:"eng",pre:false,dstr:true,
+   input:"CSV with name, brand, upc, gtin, fhs", args:"-f file, -c client_id (both required)",
+   note:"Bypasses the approve→publish flow and POSTs each row directly to the FHS API. Use only when you have a curated CSV to push. send_to_clients is the normal path; this is a power-user escape hatch."},
+];
+
+const RD_LABEL = {solo:["RD solo","solo"], qa:["after QA","qa"], eng:["eng","eng"]};
+const CAT_LABEL = {score:"Score & search",tag:"Tag & categorize",fill:"Fill in data",products:"Products in/out",publish:"Approve & publish"};
+
+const cmdsEl = document.getElementById('cmds');
+const countEl = document.getElementById('count');
+const emptyEl = document.getElementById('empty');
+
+function render(){
+  cmdsEl.innerHTML = COMMANDS.map((c,i)=>{
+    const [rdTxt,rdCls] = RD_LABEL[c.rd];
+    const badges = [
+      `<span class="b ${rdCls}">${rdTxt}</span>`,
+      c.dstr?`<span class="b dstr">destructive</span>`:``,
+      c.pre?`<span class="b pre">preflight</span>`:``,
+    ].join('');
+    return `<details class="cmd" data-cat="${c.cat}" data-dstr="${c.dstr}" data-search="${(c.n+' '+c.plain+' '+CAT_LABEL[c.cat]).toLowerCase()}">
+      <summary>
+        <span class="name">${c.n}</span>
+        <span class="plain">${c.plain}</span>
+        <span class="badges">${badges}</span>
+      </summary>
+      <div class="body">
+        <div class="row"><span class="k">Group</span><span class="v">${CAT_LABEL[c.cat]}</span></div>
+        <div class="row"><span class="k">Input</span><span class="v">${c.input}</span></div>
+        <div class="row"><span class="k">Key options</span><span class="v"><code>${c.args}</code></span></div>
+        <div class="note">${c.note}</div>
+      </div>
+    </details>`;
+  }).join('');
+  document.querySelectorAll('.cmd').forEach(d=>d.addEventListener('toggle',()=>d.classList.toggle('open',d.open)));
+}
+render();
+
+let activeCat = 'all';
+let dstrOnly = false;
+const qEl = document.getElementById('q');
+
+function apply(){
+  const q = qEl.value.trim().toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('.cmd').forEach(d=>{
+    const okCat = activeCat==='all' || d.dataset.cat===activeCat;
+    const okDstr = !dstrOnly || d.dataset.dstr==='true';
+    const okQ = !q || d.dataset.search.includes(q);
+    const vis = okCat && okDstr && okQ;
+    d.classList.toggle('hidden', !vis);
+    if(vis) shown++;
+  });
+  countEl.textContent = shown+' of '+COMMANDS.length+' commands';
+  emptyEl.classList.toggle('hidden', shown!==0);
+}
+apply();
+
+qEl.addEventListener('input', apply);
+document.getElementById('chips').addEventListener('click', e=>{
+  const b = e.target.closest('.chip'); if(!b) return;
+  if(b.dataset.flag==='destructive'){
+    dstrOnly = !dstrOnly; b.setAttribute('aria-pressed', dstrOnly);
+  } else {
+    activeCat = b.dataset.cat;
+    document.querySelectorAll('.chip[data-cat]').forEach(c=>c.setAttribute('aria-pressed', c===b));
+  }
+  apply();
+});
+</script>

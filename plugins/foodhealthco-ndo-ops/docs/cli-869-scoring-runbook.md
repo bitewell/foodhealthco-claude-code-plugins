@@ -107,8 +107,8 @@ Imputes missing calories/fat/protein/carbs/**added sugars**.
 
 ### Step 4 — Score
 *"Run backfill_fhs against prod for those IDs."*
-Writes ScoringResult rows. Preflight blocks any product missing the minimum macros (fix in admin, re-run).
-- **Search propagation:** scored products don't reach consumer search until the reindex chain runs. `--with-reindex` auto-skips here because `DO_OPENSEARCH_URL` isn't in the scoped env. If these need to be searchable, that's a follow-up (provision OpenSearch creds, or eng runs the reindex).
+Writes ScoringResult rows (UNAPPROVED). Preflight blocks any product missing the minimum macros (fix in admin, re-run).
+- **Search propagation happens at approval, not here.** Scoring writes unapproved scores; the consumer search index is rebuilt from the *approved*-scores view, so reindex is done via `approve_scores --with-reindex` in Step 6 — not on `backfill_fhs`.
 - **Batching:** keep batches ≤ a few hundred; the 1000 guardrail clamps larger `IN (...)` lists.
 
 > ⚠️ **If scoring returns 404 for every item, stop.** The FHS scoring host (`waterfall-fhs-app`) is a **deprecated** service being migrated to `fhs-food-intel` (GKE/HeroDB) — it's been observed down. A 404 means the host is gone, not a transient; don't retry blindly. Fallback: `generate_qa_report` scores **locally** (no API) so you can still produce a QA report — but it does **not** write ScoringResult, so `approve_scores` / `send_to_clients` can't proceed on those rows until the host is back or the migration lands. Escalate to eng (ENG-874).
@@ -130,12 +130,14 @@ WHERE sr.product_match_id IN ( <the protein-powder ids from Step 0> )
 
 `fhs` is a 1–100 float on `scoring_review_scoringresult`; `product_match_id` is the same `ingestion_productmatch.id` threaded through the whole chain. Then `approve_scores --csv <that file> --target prod` (batch size fixed at 300).
 
+Approval is also where propagation happens: add **`--with-reindex`** to rebuild the index views and push the approved scores to OpenSearch (needs `DO_OPENSEARCH_*`; auto-skips cleanly if unset), and **`--send-to-clients all|select`** to fold Step 7 into the same command.
+
 ### Step 7 — Publish to clients
-*"Run send_to_clients against prod for those product_ids."* → publishes ApprovedScoringResults. External side effect — this is the irreversible end of the chain.
+*"Run send_to_clients against prod for those product_ids."* → publishes ApprovedScoringResults. External side effect — this is the irreversible end of the chain. (Or do it in one shot from Step 6 with `approve_scores --with-reindex --send-to-clients all`.)
 
 ---
 
 ## Prerequisites & known gaps
 - **RD repo access:** both RDs must be added to private repos **`nutrition-data-ops`** + **`fhs-app`** with working SSH keys before the session.
 - **Scoring host:** scoring runs against the **DO waterfall host** (`items` schema), not GCP `fhs-api.foodhealth.co` (`products` schema). Verified: prod scoring returns real FHS values; **dev scoring returns 0** (host doesn't hold dev IDs — see the demo caveat).
-- **`backfill_categories`** (categorize uncategorized PPs) needs `CATEGORY_ENDPOINT_*`; **`--with-reindex`** (search propagation) needs `DO_OPENSEARCH_*`. Provision before those steps — both auto-skip/block cleanly otherwise.
+- **`backfill_categories`** (categorize uncategorized PPs) needs `CATEGORY_ENDPOINT_*`; **`approve_scores --with-reindex`** (search propagation) needs `DO_OPENSEARCH_*`. Provision before those steps — both auto-skip/block cleanly otherwise.
