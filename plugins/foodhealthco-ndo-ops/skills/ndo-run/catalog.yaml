@@ -24,12 +24,12 @@ scoring:
     notes: |
       Default batch=250. Runs via ScoringJob which calls the FHS API.
 
-      Scoring writes ScoringResult/ASR rows but does NOT refresh the index
-      materialized view or reindex OpenSearch — scored products won't reach
-      consumer search until those steps run. Pass `--with-reindex` to chain
-      `refresh_fhs_view_for_index_command` + `index_scored_view_command`
-      after a successful score. The chain auto-skips on `--target dev`
-      (dev OpenSearch not wired) and when `DO_OPENSEARCH_URL` is unset.
+      Scoring writes UNAPPROVED ScoringResult/ASR rows. It does NOT reindex —
+      the consumer search index is built from the approved-scores view, so
+      products legitimately don't reach search until they're approved. The
+      reindex + client-publish steps now live on `approve_scores`
+      (`approve_scores --with-reindex [--send-to-clients ...]`). After a
+      successful backfill the runner prints a reminder pointing at that step.
 
   backfill_fhs_and_refresh_view_command:
     help: Score products AND refresh index materialized views
@@ -41,10 +41,9 @@ scoring:
       After scoring, refreshes fhs_values_with_attr_for_index_mat_view. Use this
       when new profiles land for a whole source.
 
-      Refreshes the view internally but does NOT reindex OpenSearch. Pass
-      `--with-reindex` to chain `index_scored_view_command` after a successful
-      run (the chain knows to skip the redundant view refresh for this
-      command). Same dev/`DO_OPENSEARCH_URL` auto-skip rules apply.
+      Writes UNAPPROVED scores and does NOT reindex OpenSearch. As with
+      `backfill_fhs`, reindex + client-publish happen at approval time via
+      `approve_scores --with-reindex [--send-to-clients ...]`, not here.
 
   refresh_fhs_view_for_index_command:
     help: Refresh fhs_values_with_attr_for_index_mat_view (no scoring)
@@ -280,6 +279,19 @@ scoring_review:
     notes: |
       CSV must have BOTH `fhs` and `product_id` columns (command raises otherwise).
       batch_size fixed at 300.
+
+      This is the approval gate AND the propagation entry point:
+        --with-reindex        after approving, refresh the index materialized
+                              views and push the approved-scores view to
+                              OpenSearch (chains refresh_fhs_view_for_index_command
+                              + index_scored_view_command). Prod-only; auto-skips
+                              on --target dev or when DO_OPENSEARCH_URL is unset.
+        --send-to-clients     also publish the approved scores to clients:
+                              `all` (every client on the rows) or `select`
+                              (one client, needs --client-id). `requested`
+                              (clients who requested the product) is not yet
+                              supported — no NDO concept for it (ENG-895 area).
+                              Prod-only; runs after the reindex chain.
 
   send_to_clients:
     help: Publish approved scores to clients

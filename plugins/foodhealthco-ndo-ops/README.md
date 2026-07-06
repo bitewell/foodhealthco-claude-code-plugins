@@ -24,6 +24,10 @@ A single `ndo-run` skill that wraps **19 NDO `manage.py` commands** behind one e
 
 Authoritative list with args, CSV schemas, and notes: [skills/ndo-run/catalog.yaml](skills/ndo-run/catalog.yaml).
 
+## Docs & guides
+
+Dietitian-facing and operator guides live in [`docs/`](docs/) — see [docs/README.md](docs/README.md) for the index. The interactive, RD-facing reference is [docs/ndo-run-guide.html](docs/ndo-run-guide.html) (download and open it — it's a single self-contained file).
+
 ## Install
 
 ```
