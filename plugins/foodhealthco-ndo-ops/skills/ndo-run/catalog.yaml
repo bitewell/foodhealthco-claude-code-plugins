@@ -250,7 +250,7 @@ ingestion:
   generate_scores:
     help: Export FHS values for all products of a vendor as an .xlsx
     input: vendor  # no product IDs; takes a vendor_code and pulls internally
-    args: [-v, --vendor_code]
+    args: [-vc, --vendor_code]  # NDO renamed -v -> -vc (ENG-898: -v collides with Django --verbosity)
     sync_flag: null
     notes: |
       Writes `ooh_fhs_for_{vendor_code}.xlsx` in the nutrition-data-ops working dir.

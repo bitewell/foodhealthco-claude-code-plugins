@@ -58,7 +58,7 @@ The runner handles: reading `.env`, building/uploading the CSV, translating env 
 - **Local CSV:** `--csv /path/to/ids.csv` — runner validates columns against the command's schema (see catalog), then uploads.
 - **Existing Spaces key:** `--spaces-key ops-skill/2026-04-24T....csv` — skips upload.
 - **Source-only** (`backfill_fhs_and_refresh_view_command`, `match_products`): `--source my_source` — no file input.
-- **Vendor-only** (`generate_scores`): pass `-v <code>` via `-- -v my_vendor` (see "passthrough" below).
+- **Vendor-only** (`generate_scores`): pass `-vc <code>` via `-- -vc my_vendor` (see "passthrough" below). Note: the short flag is `-vc`, not `-v` — `-v` is reserved by Django for `--verbosity` (ENG-898).
 
 ### Target and DB
 
@@ -79,7 +79,7 @@ Anything after `--` is appended verbatim to the `manage.py` command:
 ndo_run.py match_products --source my_source --target dev -- -l 100 -st nielsen_exact_match
 ```
 
-Use this for: `-r`/`-o` on `remove_products_and_scores`, `-v` on `generate_scores`, `-if`/`-ef`/`-t` on `backfill_ni_profiles`, `-bs`/`-o` on `backfill_categories`, etc.
+Use this for: `-r`/`-o` on `remove_products_and_scores`, `-vc` on `generate_scores`, `-if`/`-ef`/`-t` on `backfill_ni_profiles`, `-bs`/`-o` on `backfill_categories`, etc.
 
 ## Safety defaults
 
