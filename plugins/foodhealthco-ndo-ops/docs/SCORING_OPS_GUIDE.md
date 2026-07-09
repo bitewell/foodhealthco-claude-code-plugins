@@ -91,6 +91,20 @@ DO_SPACES_REGION=nyc3
 FHS_API_URL=https://waterfall-fhs-app-p5un2.ondigitalocean.app
 FHS_API_TOKEN=
 
+# --- Client publish (only for send_to_clients / approve_scores --send-to-clients) ---
+# Non-Kroger clients (e.g. Hy-Vee) publish via FHSAPIClient:
+FHSAPI_BASE_URL=https://fhs-api.bitewell.com/api/v1
+FHSAPI_API_TOKEN=
+# Kroger publishes via KrogerBulkPush → Kroger Feed Gateway. NDO builds
+# KROGER_AUTH = "Basic " + base64("<KEY>:<SECRET>"); absent creds send
+# Basic base64("None:None") → 401 (the failure is swallowed, so the command
+# still exits 0). KROGER_BASE_URL must NOT end in /v1 — the token path appends
+# /v1/connect/oauth2/token. The app must carry the
+# urn:com:kroger:feedgateway:items:write scope.
+KROGER_BASE_URL=https://api.kroger.com
+KROGER_API_KEY=
+KROGER_SECRET_KEY=
+
 # --- Tagging config ---
 # Tells NDO which Text2Tag config to use. MUST match what production uses
 # (currently t2t_v4.csv). If unset, NDO defaults to an older config and your

@@ -63,6 +63,13 @@ Set the keys below in a `.env` discovered by the runner (recommended: `<foodheal
 | `FHS_API_URL`, `FHS_API_TOKEN` | DO App Platform → `waterfall-fhs-app` → Env Vars (or 1Password "FHS API tokens") |
 | `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY` | 1Password "DO Spaces — btw-nutrition prod write" (the project-default keys are scoped to `backfills-test` and can't write to btw-nutrition) |
 
+**Required for `send_to_clients` / `approve_scores --send-to-clients` (client publish):**
+
+| Variable | Source |
+|---|---|
+| `FHSAPI_BASE_URL`, `FHSAPI_API_TOKEN` | DO App Platform → NDO app → Env Vars (or 1Password). Used by the non-Kroger notifier (e.g. Hy-Vee) via `FHSAPIClient`. |
+| `KROGER_BASE_URL`, `KROGER_API_KEY`, `KROGER_SECRET_KEY` | DO App Platform → NDO app → Env Vars (or the Kroger developer portal / 1Password). `KROGER_BASE_URL` **must not** end in `/v1` (use `https://api.kroger.com`); the registered app needs the `urn:com:kroger:feedgateway:items:write` scope. |
+
 **Required for `backfill_categories`:**
 
 | Variable | Source |

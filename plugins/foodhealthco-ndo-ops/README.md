@@ -60,6 +60,12 @@ DO_SPACES_SECRET_KEY      # matching secret
 DO_SPACES_REGION          # nyc3 by default
 FHS_API_URL               # FHS scoring API endpoint
 FHS_API_TOKEN             # FHS scoring API token
+# Client publish — only needed for send_to_clients / approve_scores --send-to-clients:
+FHSAPI_BASE_URL           # FHS publish API base for non-Kroger clients (e.g. Hy-Vee)
+FHSAPI_API_TOKEN          # FHS publish API token
+KROGER_BASE_URL           # Kroger API host — MUST NOT end in /v1 (use https://api.kroger.com)
+KROGER_API_KEY            # Kroger client_id (app needs feedgateway items:write scope)
+KROGER_SECRET_KEY         # Kroger client_secret
 DEFAULT_TAGGING_FILE      # the DO Spaces key for the production t2t config (e.g. t2t_v4.csv)
 # Optional:
 CATEGORY_ENDPOINT_URL     # BentoML category-prediction (for backfill_categories)
