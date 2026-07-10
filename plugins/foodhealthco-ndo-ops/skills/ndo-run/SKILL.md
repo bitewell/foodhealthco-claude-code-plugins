@@ -177,6 +177,7 @@ Before the first run in a session:
 
 - Confirm `nutrition-data-ops/` is checked out (runner discovers it via `$NDO_ROOT`, walk-up from CWD, or `~/Code/nutrition-data-ops`; exits with a clone hint if missing).
 - Confirm the `.env` (plugins-repo, NDO checkout, or `~/.config/ndo-run/.env` — see `discover_env_file` for the chain) has `NDO_DEV_DATABASE_URL`, `NDO_PROD_DATABASE_URL`, `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY`, `FHS_API_URL`, `FHS_API_TOKEN`. The runner will fail loudly if any are missing.
+- For `send_to_clients` / `approve_scores --send-to-clients`, also set the **client-publish** creds (the runner forwards them; if missing, the affected client's publish fails **silently** — each notifier is try/excepted, so the command still exits 0): `FHSAPI_BASE_URL` + `FHSAPI_API_TOKEN` for non-Kroger clients (e.g. Hy-Vee, via `FHSAPIClient`), and `KROGER_BASE_URL` + `KROGER_API_KEY` + `KROGER_SECRET_KEY` for Kroger. `KROGER_BASE_URL` **must not** end in `/v1` (use `https://api.kroger.com`); NDO derives `KROGER_AUTH = "Basic " + base64(KROGER_API_KEY:KROGER_SECRET_KEY)`, so absent creds send `Basic base64("None:None")` → 401.
 
 ## Programmatic invocation (Dagster)
 

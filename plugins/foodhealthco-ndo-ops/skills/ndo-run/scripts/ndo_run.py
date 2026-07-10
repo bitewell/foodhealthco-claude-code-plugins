@@ -209,6 +209,26 @@ def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str
     for passthrough in (
         "FHS_API_URL",
         "FHS_API_TOKEN",
+        # Client-publish creds for send_to_clients / approve_scores
+        # --send-to-clients. ExecuteProcessorsJob fires two independent client
+        # notifiers, each wrapped in try/except (so a failure is swallowed and
+        # the command still exits 0):
+        #   * non-Kroger clients (e.g. Hy-Vee) -> FHSAPIClient, which reads
+        #     settings.FHSAPI_BASE_URL / FHSAPI_API_TOKEN;
+        #   * Kroger -> KrogerBulkPush, which reads settings.KROGER_* (NDO
+        #     derives KROGER_AUTH = "Basic " +
+        #     b64(f"{KROGER_API_KEY}:{KROGER_SECRET_KEY}")).
+        # Neither set was forwarded before, so from a clean .env no client
+        # publish could authenticate: Kroger fell back to Basic b64("None:None")
+        # -> 401, and FHSAPI_* resolved to None. (Runs that happened to export
+        # these in the shell still worked, which masked the gap.)
+        # NOTE: KROGER_BASE_URL must NOT end in /v1 -- the token path appends
+        # /v1/connect/oauth2/token, so a trailing /v1 yields a broken /v1/v1/.
+        "FHSAPI_BASE_URL",
+        "FHSAPI_API_TOKEN",
+        "KROGER_BASE_URL",
+        "KROGER_API_KEY",
+        "KROGER_SECRET_KEY",
         # BentoML category-prediction endpoint used by `backfill_categories`
         "CATEGORY_ENDPOINT_URL",
         "CATEGORY_ENDPOINT_TOKEN",
