@@ -12,18 +12,20 @@ Two databases, two patterns:
 - **NDO (Django ingestion DB)** — DigitalOcean managed Postgres. Public-IP, direct `psql` works.
 - **HeroDB (operational DB)** — GCP Cloud SQL Postgres. Requires `cloud-sql-proxy` because public IP isn't allowlisted from a laptop.
 
-**Auth model — read this first.** For HeroDB the default is your **own IAM identity, passwordless**: `cloud-sql-proxy --auto-iam-authn` injects your Google OAuth token and you connect as your `@foodhealth.co` email, so every query is attributable to you in the DB audit log. The shared `dagster` password is **break-glass fallback only**. When an operation needs `dagster`-owned **write** privileges, don't connect as `dagster` from a laptop — route it through Dagster (see [Writes & privileged operations](#writes--privileged-operations)) so the trace ties to the actor. NDO has no IAM-auth option (DigitalOcean managed), so it stays password-based.
+**Auth model — read this first.** For HeroDB the default is your **own IAM identity, passwordless**: `cloud-sql-proxy --auto-iam-authn` injects your Google OAuth token and you connect as your `@foodhealth.co` email, so every query is attributable to you in the DB audit log. The shared `dagster` password is **break-glass fallback only**. When an operation needs `dagster`-owned **write** privileges, don't connect as `dagster` from a laptop — route it through Dagster (see [Writes & privileged operations](#writes--privileged-operations)) so the trace ties to the actor. **NDO moved off DigitalOcean (2026-07-17):** it now lives on the same hero-db Cloud SQL instances as a **peer database `ndo`**, reached via the same proxy — but its tables are owned by the password-based **`ndo`** role, so NDO queries use that role's password (not IAM).
 
 ## Connection inventory
 
-### NDO Postgres (DigitalOcean)
+### NDO Postgres (now on GCP Cloud SQL — migrated off DigitalOcean 2026-07-17)
 
-| Env | Host | Port | DB | User | Password source |
-|---|---|---|---|---|---|
-| **prod** | `ndo-production-database-do-user-12255452-0.e.db.ondigitalocean.com` | `25060` | `defaultdb` | `doadmin` | Dagster Cloud secret `NDO_PROD_DB_PASSWORD` (or `bitewell-databricks` cluster env `DB_CONNECTION_STRING`) |
-| **dev** | `ndo-db-development-do-user-12255452-0.d.db.ondigitalocean.com` | `25060` | `defaultdb` | `doadmin` | Dagster Cloud secret `NDO_DEV_DB_PASSWORD` |
+The DigitalOcean NDO Postgres is **DELETED**. NDO now lives on the **same hero-db Cloud SQL instances** as a **peer database `ndo`** (schema `public`; every table/view name identical to the old DO `defaultdb`). Connect exactly like HeroDB below, but `dbname=ndo` as the **`ndo` role** — which owns all NDO tables (`dagster`/IAM authenticate but have **no grants** on them).
 
-`sslmode=require` is mandatory.
+| Env | Connection name | DB | User | Password source |
+|---|---|---|---|---|
+| **prod** | `foodhealth-platform-prod:us-central1:hero-db-prod` | `ndo` | `ndo` | Dagster Cloud secret `NDO_PROD_DB_PASSWORD` (cache to `~/.herodb_ndo_password`) |
+| **dev**  | `foodhealth-platform-dev:us-central1:hero-db-dev`   | `ndo` | `ndo` | Dagster Cloud secret `NDO_DEV_DB_PASSWORD` |
+
+Because the `ndo` role is password-based, it needs a **non-IAM** proxy (the default `--auto-iam-authn` proxy serves IAM only) — run one on its own port (see the NDO recipe below).
 
 ### HeroDB (GCP Cloud SQL)
 
@@ -80,12 +82,16 @@ chmod 600 ~/.herodb_dev_db_password
 
 ## Connecting
 
-### NDO (no proxy)
+### NDO (now via a non-IAM Cloud SQL proxy on hero-db)
+
+The DO host is gone; NDO is the `ndo` peer DB on hero-db (above). The `ndo` role is password-based, so use a proxy WITHOUT `--auto-iam-authn` on its own port:
 
 ```bash
-PGPASSWORD=$(cat ~/.ndo_prod_db_password) psql \
-  "host=ndo-production-database-do-user-12255452-0.e.db.ondigitalocean.com port=25060 user=doadmin dbname=defaultdb sslmode=require" \
+cloud-sql-proxy foodhealth-platform-prod:us-central1:hero-db-prod --port 5443 &   # non-IAM
+PGPASSWORD=$(cat ~/.herodb_ndo_password) psql \
+  "host=127.0.0.1 port=5443 user=ndo dbname=ndo sslmode=disable" \
   -c "<sql>"
+lsof -nP -iTCP:5443 -sTCP:LISTEN -t | xargs kill   # when done
 ```
 
 ### HeroDB (proxy required — IAM, passwordless)
