@@ -5,9 +5,18 @@ real proxy — the spawn path needs gcloud/ADC and a live instance, so it's
 exercised in integration, not here.
 """
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+# ndo_run imports python-dotenv at module load, but the minimal CI test env only
+# installs pyyaml. The proxy logic under test is pure stdlib and never touches
+# dotenv, so stub it just enough for `import ndo_run` to succeed.
+if "dotenv" not in sys.modules:
+    _dotenv_stub = types.ModuleType("dotenv")
+    _dotenv_stub.dotenv_values = lambda *a, **k: {}
+    sys.modules["dotenv"] = _dotenv_stub
 
 import ndo_run  # noqa: E402
 
