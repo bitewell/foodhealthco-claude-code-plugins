@@ -59,7 +59,7 @@ Set the keys below in a `.env` discovered by the runner (recommended: `<foodheal
 
 | Variable | Source |
 |---|---|
-| `NDO_DEV_DATABASE_URL` / `NDO_PROD_DATABASE_URL` | DigitalOcean → Databases → ndo-{dev,production}-database → URI string |
+| `NDO_DEV_DATABASE_URL` / `NDO_PROD_DATABASE_URL` | GCP hero-db `ndo` DB via cloud-sql-proxy: `postgresql://ndo:<pwd>@127.0.0.1:<proxy-port>/ndo?sslmode=disable` (writes → `ndo` owner). Dev pwd = GCP Secret Manager `ndo-db-pwd`; prod pwd already in the local `.env`. DO decommissioned (ENG-976). |
 | `FHS_API_URL`, `FHS_API_TOKEN` | DO App Platform → `waterfall-fhs-app` → Env Vars (or 1Password "FHS API tokens") |
 | `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY` | 1Password "DO Spaces — btw-nutrition prod write" (the project-default keys are scoped to `backfills-test` and can't write to btw-nutrition) |
 

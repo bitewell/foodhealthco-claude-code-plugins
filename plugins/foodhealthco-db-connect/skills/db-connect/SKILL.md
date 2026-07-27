@@ -1,6 +1,6 @@
 ---
 name: db-connect
-description: Connect to FoodHealth's NDO Postgres (DigitalOcean managed) and HeroDB (GCP Cloud SQL via cloud-sql-proxy). HeroDB connects under the operator's own IAM identity (passwordless, --auto-iam-authn); NDO uses a password. Handles proxy lifecycle, IAM/credential auth, and the right `psql` invocation for each env. Use when the user asks to query NDO or HeroDB, run audit/forensic SQL, verify data after a Dagster or Databricks run, or set up a local DB connection for the first time. Trigger phrases include "query NDO", "query HeroDB", "connect to herodb", "run this SQL on prod", "check the for_ingestion table", "check gtin_matrix".
+description: Connect to FoodHealth's NDO and HeroDB Postgres — both now GCP Cloud SQL on the hero-db-{dev,prod} instances, via cloud-sql-proxy. Reads use your own IAM identity (passwordless, --auto-iam-authn); writes use the DB owner's password. Handles proxy lifecycle, IAM/credential auth, and the right `psql` invocation for each env. Use when the user asks to query NDO or HeroDB, run audit/forensic SQL, verify data after a Dagster or Databricks run, or set up a local DB connection for the first time. Trigger phrases include "query NDO", "query HeroDB", "connect to herodb", "run this SQL on prod", "check the for_ingestion table", "check gtin_matrix".
 ---
 
 # db-connect
@@ -9,21 +9,26 @@ Reach FoodHealth's production data stores from a local machine in a consistent, 
 
 Two databases, two patterns:
 
-- **NDO (Django ingestion DB)** — DigitalOcean managed Postgres. Public-IP, direct `psql` works.
+- **NDO (Django ingestion DB)** — now the `ndo` database on the hero-db GCP Cloud SQL instances (DO decommissioned, ENG-976). Requires `cloud-sql-proxy`, same as HeroDB.
 - **HeroDB (operational DB)** — GCP Cloud SQL Postgres. Requires `cloud-sql-proxy` because public IP isn't allowlisted from a laptop.
 
-**Auth model — read this first.** For HeroDB the default is your **own IAM identity, passwordless**: `cloud-sql-proxy --auto-iam-authn` injects your Google OAuth token and you connect as your `@foodhealth.co` email, so every query is attributable to you in the DB audit log. The shared `dagster` password is **break-glass fallback only**. When an operation needs `dagster`-owned **write** privileges, don't connect as `dagster` from a laptop — route it through Dagster (see [Writes & privileged operations](#writes--privileged-operations)) so the trace ties to the actor. NDO has no IAM-auth option (DigitalOcean managed), so it stays password-based.
+**Auth model — read this first.** For HeroDB the default is your **own IAM identity, passwordless**: `cloud-sql-proxy --auto-iam-authn` injects your Google OAuth token and you connect as your `@foodhealth.co` email, so every query is attributable to you in the DB audit log. The shared `dagster` password is **break-glass fallback only**. When an operation needs `dagster`-owned **write** privileges, don't connect as `dagster` from a laptop — route it through Dagster (see [Writes & privileged operations](#writes--privileged-operations)) so the trace ties to the actor. NDO now lives on the same hero-db Cloud SQL instances (as a separate `ndo` database), so the same IAM-passwordless read path applies (prod granted; dev grant pending); the `ndo` owner uses a password for writes.
 
 ## Connection inventory
 
-### NDO Postgres (DigitalOcean)
+### NDO Postgres (GCP Cloud SQL — `ndo` database on hero-db)
 
-| Env | Host | Port | DB | User | Password source |
-|---|---|---|---|---|---|
-| **prod** | `ndo-production-database-do-user-12255452-0.e.db.ondigitalocean.com` | `25060` | `defaultdb` | `doadmin` | Dagster Cloud secret `NDO_PROD_DB_PASSWORD` (or `bitewell-databricks` cluster env `DB_CONNECTION_STRING`) |
-| **dev** | `ndo-db-development-do-user-12255452-0.d.db.ondigitalocean.com` | `25060` | `defaultdb` | `doadmin` | Dagster Cloud secret `NDO_DEV_DB_PASSWORD` |
+**DO decommissioned 2026-07 (ENG-976).** NDO is now a separate `ndo` database on the
+hero-db instances (peer to `herodb`), reached via `cloud-sql-proxy` — same pattern as HeroDB.
 
-`sslmode=require` is mandatory.
+| Env | Connection name | DB | Reads (IAM, passwordless) | Writes (owner) |
+|---|---|---|---|---|
+| **prod** | `foodhealth-platform-prod:us-central1:hero-db-prod` | `ndo` | your `@foodhealth.co` IAM — granted | user `ndo` via no-IAM proxy (pwd in plugins `.env` URL) |
+| **dev** | `foodhealth-platform-dev:us-central1:hero-db-dev` | `ndo` | your `@foodhealth.co` IAM — **grant pending** (dev `ndo` isn't schema owner; owner must GRANT the `gke-developers` group) | user `ndo` via no-IAM proxy (pwd = GCP Secret Manager `ndo-db-pwd`) |
+
+IAM proxy ports follow HeroDB (prod `5433`, dev `5434`); reads just use `dbname=ndo`.
+Writes need a separate **no-IAM** proxy on its own port + the `ndo` owner password.
+`sslmode=disable` (the proxy handles TLS).
 
 ### HeroDB (GCP Cloud SQL)
 
@@ -80,13 +85,16 @@ chmod 600 ~/.herodb_dev_db_password
 
 ## Connecting
 
-### NDO (no proxy)
+### NDO (via proxy — same as HeroDB, `dbname=ndo`)
+
+NDO moved to GCP Cloud SQL. Reads use the IAM proxy exactly like HeroDB:
 
 ```bash
-PGPASSWORD=$(cat ~/.ndo_prod_db_password) psql \
-  "host=ndo-production-database-do-user-12255452-0.e.db.ondigitalocean.com port=25060 user=doadmin dbname=defaultdb sslmode=require" \
-  -c "<sql>"
+herodb_proxy_up prod   # or dev
+psql -w "host=127.0.0.1 port=5433 user=$(gcloud config get-value account) dbname=ndo" -c "<sql>"
 ```
+
+Writes (as the `ndo` owner) need a separate **no-IAM** proxy on its own port + the owner password.
 
 ### HeroDB (proxy required — IAM, passwordless)
 
