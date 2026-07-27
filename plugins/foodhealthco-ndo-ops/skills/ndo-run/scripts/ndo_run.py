@@ -21,6 +21,8 @@ import csv
 import json
 import os
 import shlex
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -988,6 +990,134 @@ def write_summary(
         print(f"warning: failed to write summary to {path}: {e}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# cloud-sql-proxy lifecycle
+#
+# NDO migrated off DigitalOcean onto GCP Cloud SQL (2026-07-17) and is now
+# reached through a LOCAL non-IAM cloud-sql-proxy. Rather than make operators
+# start one by hand in a separate terminal each session, the runner brings the
+# right proxy up itself and tears down ONLY what it started. A proxy that is
+# already running (e.g. a developer's own) is detected and reused, never killed.
+# ---------------------------------------------------------------------------
+DEFAULT_CLOUDSQL_INSTANCES = {
+    "prod": "foodhealth-platform-prod:us-central1:hero-db-prod",
+    "dev": "foodhealth-platform-dev:us-central1:hero-db-dev",
+}
+DEFAULT_PROXY_PORTS = {"prod": 5443, "dev": 5444}
+PROXY_READY_TIMEOUT_S = 20
+
+
+def _dsn_host_port(dsn: str | None) -> tuple[Optional[str], Optional[int]]:
+    if not dsn:
+        return (None, None)
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(dsn)
+        return (u.hostname, u.port)
+    except (ValueError, TypeError):
+        return (None, None)
+
+
+def _port_listening(host: str, port: int, timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+class _ProxyHandle:
+    def __init__(self, proc: subprocess.Popen, logf, port: int) -> None:
+        self.proc = proc
+        self.logf = logf
+        self.port = port
+
+
+def start_proxy_if_needed(
+    target: str, dsn: str | None, db: str
+) -> Optional[_ProxyHandle]:
+    """Ensure a non-IAM cloud-sql-proxy is serving the NDO instance for `target`.
+
+    Returns a handle for a proxy this call STARTED (the caller must stop_proxy
+    it), or None when nothing was started: --db platform (HeroDB proxy lifecycle
+    belongs to the db-connect skill), a non-local DSN (direct connection), or a
+    proxy already listening on the port. Exits with actionable guidance if it
+    must start one but cannot.
+    """
+    if db == "platform":
+        return None
+    host, port = _dsn_host_port(dsn)
+    if host and host not in ("127.0.0.1", "localhost"):
+        return None  # direct / remote connection — nothing to manage
+    port = port or DEFAULT_PROXY_PORTS.get(target, 5443)
+    if _port_listening("127.0.0.1", port):
+        return None  # a proxy is already serving this port — reuse it
+    instance = os.environ.get(
+        f"NDO_{target.upper()}_CLOUDSQL_INSTANCE"
+    ) or DEFAULT_CLOUDSQL_INSTANCES.get(target)
+    if not instance:
+        sys.exit(
+            f"error: no Cloud SQL instance known for --target {target}. "
+            f"Set NDO_{target.upper()}_CLOUDSQL_INSTANCE in your environment."
+        )
+    binary = shutil.which("cloud-sql-proxy")
+    if not binary:
+        sys.exit(
+            "error: `cloud-sql-proxy` is not on your PATH, and the NDO database "
+            "now lives on GCP Cloud SQL (reached via the proxy).\n"
+            "  Install it: brew install cloud-sql-proxy\n"
+            "  Then re-run — the runner starts the proxy for you."
+        )
+    print(f"[proxy] starting cloud-sql-proxy for {instance} on :{port} …", flush=True)
+    logf = tempfile.TemporaryFile()  # binary; drains proxy output so it can't block
+    proc = subprocess.Popen(
+        [binary, instance, "--port", str(port)], stdout=logf, stderr=subprocess.STDOUT
+    )
+    deadline = time.monotonic() + PROXY_READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:  # died before it was ready
+            logf.seek(0)
+            out = logf.read().decode("utf-8", "replace")
+            logf.close()
+            sys.exit(
+                "error: cloud-sql-proxy exited before it was ready:\n"
+                f"{out}\n"
+                "Check: `gcloud auth application-default login`, set the project "
+                f"(`gcloud config set project foodhealth-platform-{target}`), and "
+                "confirm you have roles/cloudsql.client on the project."
+            )
+        if _port_listening("127.0.0.1", port):
+            print(f"[proxy] ready on 127.0.0.1:{port}", flush=True)
+            return _ProxyHandle(proc, logf, port)
+        time.sleep(0.4)
+    proc.terminate()
+    logf.close()
+    sys.exit(
+        f"error: cloud-sql-proxy did not become ready on :{port} within "
+        f"{PROXY_READY_TIMEOUT_S}s. Check `gcloud auth application-default login` "
+        "and that you have roles/cloudsql.client on the project."
+    )
+
+
+def stop_proxy(handle: Optional[_ProxyHandle]) -> None:
+    """Terminate a proxy started by start_proxy_if_needed (no-op for None)."""
+    if handle is None:
+        return
+    try:
+        handle.proc.terminate()
+        try:
+            handle.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            handle.proc.kill()
+    finally:
+        try:
+            handle.logf.close()
+        except Exception:
+            pass
+        print(f"[proxy] stopped (:{handle.port})", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -1005,6 +1135,7 @@ def main(argv: list[str] | None = None) -> int:
     send_clients_steps: list[dict] = []
     send_clients_skipped_reason: str | None = None
     batch_clamps: list[dict] = []
+    proxy_handle: Optional[_ProxyHandle] = None
 
     try:
         args.extra, batch_clamps = clamp_batch_flags(
@@ -1037,6 +1168,10 @@ def main(argv: list[str] | None = None) -> int:
         # upload, no preflight, no env translation. Postflight still runs but
         # scans the filesystem rather than opening a DB connection.
         if spec.get("tool") == "fhs_app":
+            # generate_qa_report reads fhs-app's own .env DATABASE_URL, which
+            # points at the same GCP Cloud SQL `ndo` DB via the proxy — so make
+            # sure the proxy is up for the target too.
+            proxy_handle = start_proxy_if_needed(args.target, None, args.db)
             exit_code, run_meta = main_fhs_app(args, spec, started_at)
             input_count = run_meta["input_count"]
             spaces_key = None  # fhs-app doesn't use Spaces
@@ -1067,6 +1202,13 @@ def main(argv: list[str] | None = None) -> int:
 
         meltano_env = load_meltano_env()
         ndo_env = build_ndo_env(meltano_env, args.target, args.db)
+
+        # NDO lives on GCP Cloud SQL — make sure a cloud-sql-proxy is up before
+        # anything touches the DB (preflight, the command, postflight). Starts
+        # one only if the operator doesn't already have it running.
+        proxy_handle = start_proxy_if_needed(
+            args.target, ndo_env.get("DATABASE_URL"), args.db
+        )
 
         # Pre-flight: inspect inputs vs DB state and (for prod) prompt before
         # any write. Runs only when a preflight impl exists for the command;
@@ -1185,6 +1327,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return exit_code
     finally:
+        stop_proxy(proxy_handle)
         if args.summary_out:
             write_summary(
                 args.summary_out,
