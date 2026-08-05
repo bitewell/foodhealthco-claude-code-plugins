@@ -1,0 +1,262 @@
+# Query catalog for the ndo-query skill.
+#
+# Every query here runs against the `dietitian` view schema on the `ndo`
+# database, as the operator's own IAM identity, in a read-only session.
+# The schema's grants are the security boundary — this catalog is the UX.
+#
+# Conventions:
+#   - All table references are schema-qualified (dietitian.*) even though the
+#     runner also sets search_path=dietitian.
+#   - Parameters are ALWAYS bound (%(name)s) — never interpolated. int_list
+#     params bind as Postgres arrays via `= ANY(%(ids)s)`.
+#   - Optional string filters use the '' sentinel: (%(x)s = '' OR col = %(x)s).
+#   - Every row-returning query has a LIMIT (bound, max-clamped by the runner).
+#   - `approved` is tri-state: NULL = awaiting review, true/false = decided.
+#
+# Adding a query: PR to this file. If it needs a column the views don't
+# expose, extend nutrition-data-ops/db/sqls/dietitian_read_surface.sql first
+# (create_view re-run) — the schema stays the allowlist.
+
+queries:
+  score_status:
+    description: >
+      Per-product scoring lifecycle for a set of product ids: current FHS,
+      review-queue state (approved tri-state), approved score, publish state,
+      and whether the nutrient profile passes the scorability gate.
+    params:
+      ids:
+        type: int_list
+        required: true
+        max_items: 5000
+        help: comma-separated ingestion_productmatch ids
+    sql: |
+      SELECT pm.id,
+             pm.product_name,
+             pm.brand_name,
+             pm.source,
+             pm.product_category,
+             pm.fhs               AS pm_fhs,
+             (inv.id IS NOT NULL) AS scorable_profile,
+             sr.fhs               AS review_fhs,
+             sr.approved,
+             sr.date_reviewed,
+             asr.fhs              AS approved_fhs,
+             asr.date_approved,
+             asr.published,
+             asr.date_published
+      FROM dietitian.ingestion_productmatch pm
+      LEFT JOIN dietitian.is_nutrient_profile_valid inv ON inv.id = pm.id
+      LEFT JOIN dietitian.scoring_review_scoringresult sr ON sr.product_match_id = pm.id
+      LEFT JOIN dietitian.scoring_review_approvedscoringresult asr ON asr.product_match_id = pm.id
+      WHERE pm.id = ANY(%(ids)s)
+      ORDER BY pm.id
+
+  approval_queue:
+    description: >
+      Scores awaiting review (approved IS NULL), newest first — the working
+      queue for a review session. Optionally filtered to one source.
+    params:
+      source:
+        type: str
+        default: ""
+        help: exact ingestion_productmatch.source to filter on (optional)
+      limit:
+        type: int
+        default: 200
+        max: 1000
+    sql: |
+      SELECT sr.product_match_id,
+             sr.product_name,
+             pm.brand_name,
+             pm.source,
+             sr.gtin_upc,
+             sr.category,
+             sr.fhs,
+             sr.created_at
+      FROM dietitian.scoring_review_scoringresult sr
+      JOIN dietitian.ingestion_productmatch pm ON pm.id = sr.product_match_id
+      WHERE sr.approved IS NULL
+        AND (%(source)s = '' OR pm.source = %(source)s)
+      ORDER BY sr.created_at DESC
+      LIMIT %(limit)s
+
+  recent_approvals:
+    description: >
+      Recently approved scores with publish state. NOTE date_approved is
+      auto_now (moves on any row update) — treat windows as approximate.
+    params:
+      days:
+        type: int
+        default: 7
+        max: 90
+      limit:
+        type: int
+        default: 500
+        max: 5000
+    sql: |
+      SELECT asr.product_match_id,
+             asr.product_name,
+             pm.source,
+             asr.gtin_upc,
+             asr.fhs,
+             asr.date_approved,
+             asr.published,
+             asr.date_published
+      FROM dietitian.scoring_review_approvedscoringresult asr
+      JOIN dietitian.ingestion_productmatch pm ON pm.id = asr.product_match_id
+      WHERE asr.date_approved >= now() - make_interval(days => %(days)s)
+      ORDER BY asr.date_approved DESC
+      LIMIT %(limit)s
+
+  unsent_approved:
+    description: >
+      Approved scores that have NOT been published to clients yet
+      (published = false) — the send backlog, oldest approval first.
+    params:
+      source:
+        type: str
+        default: ""
+        help: exact source to filter on (optional)
+      limit:
+        type: int
+        default: 500
+        max: 5000
+    sql: |
+      SELECT asr.product_match_id,
+             asr.product_name,
+             pm.source,
+             asr.gtin_upc,
+             asr.fhs,
+             asr.date_approved
+      FROM dietitian.scoring_review_approvedscoringresult asr
+      JOIN dietitian.ingestion_productmatch pm ON pm.id = asr.product_match_id
+      WHERE asr.published = false
+        AND (%(source)s = '' OR pm.source = %(source)s)
+      ORDER BY asr.date_approved ASC
+      LIMIT %(limit)s
+
+  source_counts:
+    description: >
+      Scoring-funnel aggregate per source: products, scorable profiles,
+      awaiting review, approved, published. Whole-table aggregate — slower;
+      use the source param when you only care about one source.
+    timeout_s: 300
+    params:
+      source:
+        type: str
+        default: ""
+        help: exact source to filter on (optional; '' = all sources)
+      limit:
+        type: int
+        default: 100
+        max: 500
+    sql: |
+      SELECT pm.source,
+             COUNT(*)                                          AS products,
+             COUNT(inv.id)                                     AS scorable_profiles,
+             COUNT(sr.id) FILTER (WHERE sr.approved IS NULL)   AS awaiting_review,
+             COUNT(sr.id) FILTER (WHERE sr.approved)           AS approved_in_review,
+             COUNT(asr.id)                                     AS approved_rows,
+             COUNT(asr.id) FILTER (WHERE asr.published)        AS published
+      FROM dietitian.ingestion_productmatch pm
+      LEFT JOIN dietitian.is_nutrient_profile_valid inv ON inv.id = pm.id
+      LEFT JOIN dietitian.scoring_review_scoringresult sr ON sr.product_match_id = pm.id
+      LEFT JOIN dietitian.scoring_review_approvedscoringresult asr ON asr.product_match_id = pm.id
+      WHERE (%(source)s = '' OR pm.source = %(source)s)
+      GROUP BY pm.source
+      ORDER BY products DESC
+      LIMIT %(limit)s
+
+  product_lookup:
+    description: >
+      Find products by GTIN or UPC (tries the value as given AND zero-stripped
+      — GTIN/UPC zero-padding differs by source). Returns identity, category,
+      score, and scorability.
+    params:
+      code:
+        type: str
+        required: true
+        help: GTIN or UPC, with or without leading zeros
+      limit:
+        type: int
+        default: 50
+        max: 200
+    sql: |
+      SELECT pm.id,
+             pm.product_name,
+             pm.brand_name,
+             pm.source,
+             pm.gtin,
+             pm.upc,
+             pm.product_category,
+             pm.fhs,
+             pm.is_scorable,
+             (inv.id IS NOT NULL) AS scorable_profile,
+             pm.updated_at
+      FROM dietitian.ingestion_productmatch pm
+      LEFT JOIN dietitian.is_nutrient_profile_valid inv ON inv.id = pm.id
+      WHERE pm.gtin IN (%(code)s, ltrim(%(code)s, '0'))
+         OR pm.upc  IN (%(code)s, ltrim(%(code)s, '0'))
+      ORDER BY pm.updated_at DESC
+      LIMIT %(limit)s
+
+  scorability_check:
+    description: >
+      Read-only preflight for a set of ids: does each product exist, have a
+      valid nutrient profile, ingredients text, and a category — and where is
+      it in review? Use before asking eng to run a scoring chain.
+    params:
+      ids:
+        type: int_list
+        required: true
+        max_items: 5000
+    sql: |
+      SELECT pm.id,
+             pm.product_name,
+             pm.source,
+             (inv.id IS NOT NULL)                                        AS valid_profile,
+             (pm.ingredients_text IS NOT NULL AND pm.ingredients_text <> '') AS has_ingredients,
+             (pm.product_category IS NOT NULL AND pm.product_category <> '') AS has_category,
+             sr.approved,
+             asr.published
+      FROM dietitian.ingestion_productmatch pm
+      LEFT JOIN dietitian.is_nutrient_profile_valid inv ON inv.id = pm.id
+      LEFT JOIN dietitian.scoring_review_scoringresult sr ON sr.product_match_id = pm.id
+      LEFT JOIN dietitian.scoring_review_approvedscoringresult asr ON asr.product_match_id = pm.id
+      WHERE pm.id = ANY(%(ids)s)
+      ORDER BY pm.id
+
+  ingestion_status:
+    description: >
+      Client-ingestion pipeline rows (ingestion_foringestion) by vendor and/or
+      status. Statuses are capitalized: Pending, Processing, Completed,
+      Failed, Published.
+    params:
+      vendor_code:
+        type: str
+        default: ""
+        help: exact vendor_code to filter on (optional)
+      status:
+        type: str
+        default: ""
+        help: "one of: Pending, Processing, Completed, Failed, Published (optional)"
+      limit:
+        type: int
+        default: 200
+        max: 2000
+    sql: |
+      SELECT id,
+             client_id,
+             vendor_code,
+             product_name,
+             brand_name,
+             upc,
+             gtin,
+             ingestion_status,
+             created_at,
+             queued_at
+      FROM dietitian.ingestion_foringestion
+      WHERE (%(vendor_code)s = '' OR vendor_code = %(vendor_code)s)
+        AND (%(status)s = '' OR ingestion_status = %(status)s)
+      ORDER BY created_at DESC
+      LIMIT %(limit)s

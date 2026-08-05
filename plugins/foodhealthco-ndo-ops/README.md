@@ -4,7 +4,12 @@ Run nutrition-data-ops (NDO) management commands — scoring, tagging, ingestion
 
 ## What this plugin gives you
 
-A single `ndo-run` skill that wraps **19 NDO `manage.py` commands** behind one entry point. It handles:
+Two skills:
+
+- **`ndo-run`** — execute NDO ops (scoring, tagging, approving, publishing…). Operator-grade; needs the ops `.env`.
+- **`ndo-query`** — catalogued, **read-only** lookups (score status, approval queue, publish backlog, UPC lookup…) as the operator's **own IAM identity** against the curated `dietitian` view schema. No `.env`, no shared password; results land in a local CSV with only a sample echoed. This is the dietitian-safe read path — see [skills/ndo-query/SKILL.md](skills/ndo-query/SKILL.md).
+
+The `ndo-run` skill wraps **19 NDO `manage.py` commands** behind one entry point. It handles:
 
 - **CSV building + Spaces upload**: pasted `--ids 1,2,3` or a local `--csv path/to/file.csv` gets staged to DO Spaces (`btw-nutrition/ops-skill/...`) and the resulting key is passed to NDO automatically.
 - **Env translation**: `.env`-style `DO_SPACES_*` → NDO-style `DO_*`, plus `NDO_DEV_DATABASE_URL` / `NDO_PROD_DATABASE_URL` selection by `--target`.
