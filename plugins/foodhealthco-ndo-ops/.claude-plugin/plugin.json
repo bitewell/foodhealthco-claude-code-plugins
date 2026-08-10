@@ -1,7 +1,7 @@
 {
   "name": "foodhealthco-ndo-ops",
-  "version": "0.1.0",
-  "description": "Run nutrition-data-ops scoring/tagging/ingestion operations (FHS scoring, Text2Tag, profile backfills, score approvals, client publishing). Wraps 19 manage.py commands with CSV-upload, env translation, prod confirmation, and per-command preflight read-outs that bucket inputs into update/skip/block before any write.",
+  "version": "0.2.0",
+  "description": "Run nutrition-data-ops scoring/tagging/ingestion operations (FHS scoring, Text2Tag, profile backfills, score approvals, client publishing) plus catalogued read-only NDO lookups (ndo-query: score status, approval queue, publish backlog) that run as the operator's own IAM identity against the curated dietitian view schema. Ops wrap 19 manage.py commands with CSV-upload, env translation, prod confirmation, and per-command preflight read-outs.",
   "author": {
     "name": "FoodHealth Co"
   }
