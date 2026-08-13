@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Upload a local CSV to the btw-nutrition DigitalOcean Spaces bucket.
+"""Upload a local CSV to the NDO object store (GCS) for the management commands.
 
-Reads credentials from the .env discovered by ndo_run.discover_env_file:
-  - DO_SPACES_ACCESS_KEY
-  - DO_SPACES_SECRET_KEY
-  - DO_SPACES_REGION (default: nyc3)
-  - DO_SPACES_ENDPOINT (optional; derived from region if not set)
+NDO migrated object storage from DigitalOcean Spaces to Google Cloud Storage
+(see nutrition-data-ops/bitewell/helpers/cloud_storage.py), so the management
+commands now read their input CSV from `gs://$NDO_GCS_BUCKET/<key>`. This helper
+uploads there so the runner's hand-off matches where NDO actually reads. (The old
+DO Spaces path left the CSV in `btw-nutrition` while NDO looked in GCS -> the
+send died with "Cannot determine path without bucket name.")
 
-Bucket is hard-coded to `btw-nutrition` because that is what the NDO management
-commands expect (see nutrition-data-ops/bitewell/processors/downloader.py).
+Auth is Application Default Credentials (google.cloud.storage picks up the
+ambient gcloud ADC / Workload Identity). The bucket comes from NDO_GCS_BUCKET
+(e.g. ndo-files-prod); GCP_PROJECT_ID is optional (ADC default project is fine
+for cross-project bucket access).
 """
 from __future__ import annotations
 
@@ -18,12 +21,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
+from google.cloud import storage
 
-BUCKET = "btw-nutrition"
-DEFAULT_REGION = "nyc3"
 DEFAULT_PREFIX = "ops-skill"
 
 
@@ -55,40 +55,25 @@ def _timestamped_key(command: str, prefix: str = DEFAULT_PREFIX) -> str:
     return f"{prefix}/{ts}-{safe_cmd}.csv"
 
 
-def _client():
-    access_key = os.environ.get("DO_SPACES_ACCESS_KEY")
-    secret_key = os.environ.get("DO_SPACES_SECRET_KEY")
-    if not access_key or not secret_key:
-        sys.exit(
-            "error: DO_SPACES_ACCESS_KEY / DO_SPACES_SECRET_KEY not set. "
-            "Check your discovered .env (see ndo_run.discover_env_file)."
-        )
-    region = os.environ.get("DO_SPACES_REGION", DEFAULT_REGION)
-    # Always use the generic regional endpoint, NOT a bucket-specific one.
-    # If DO_SPACES_ENDPOINT is set in .env it's often `https://<bucket>.<region>.digitaloceanspaces.com`,
-    # which routes PutObject for *other* buckets to the wrong subdomain → AccessDenied.
-    endpoint = f"https://{region}.digitaloceanspaces.com"
-    session = boto3.session.Session()
-    return session.client(
-        "s3",
-        region_name=region,
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-    )
-
-
 def upload(local_path: Path, command: str, key: str | None = None) -> str:
     if not local_path.exists():
         sys.exit(f"error: {local_path} does not exist")
     _load_env()
-    spaces_key = key or _timestamped_key(command)
-    client = _client()
+    gcs_key = key or _timestamped_key(command)
+    bucket = os.environ.get("NDO_GCS_BUCKET")
+    if not bucket:
+        sys.exit(
+            "error: NDO_GCS_BUCKET not set. NDO's management commands read the "
+            "input CSV from GCS (post DO->GCP migration), so the runner must "
+            "upload there. Set NDO_GCS_BUCKET (e.g. ndo-files-prod) in your .env."
+        )
+    project = os.environ.get("GCP_PROJECT_ID") or None
     try:
-        client.upload_file(str(local_path), BUCKET, spaces_key)
-    except (BotoCoreError, ClientError) as exc:
-        sys.exit(f"error: upload failed: {exc}")
-    return spaces_key
+        client = storage.Client(project=project) if project else storage.Client()
+        client.bucket(bucket).blob(gcs_key).upload_from_filename(str(local_path))
+    except Exception as exc:
+        sys.exit(f"error: GCS upload to gs://{bucket}/{gcs_key} failed: {exc}")
+    return gcs_key
 
 
 def main(argv: list[str] | None = None) -> None:
