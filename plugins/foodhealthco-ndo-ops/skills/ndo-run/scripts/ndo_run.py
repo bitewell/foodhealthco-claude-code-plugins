@@ -2,9 +2,10 @@
 """ndo-run: invoke nutrition-data-ops management commands.
 
 Reads credentials from a .env (see `discover_env_file` for the chain),
-optionally uploads a CSV of product IDs to the btw-nutrition DigitalOcean
-Spaces bucket, then shells out to `poetry run python manage.py <command>` in
-the nutrition-data-ops checkout. Streams stdout live.
+optionally uploads a CSV of product IDs to GCS (`$NDO_GCS_BUCKET`, where the
+management commands read it post DO->GCP migration), then shells out to
+`poetry run python manage.py <command>` in the nutrition-data-ops checkout.
+Streams stdout live.
 
 Usage (driven by Claude via the skill; humans can also invoke directly):
 
@@ -247,6 +248,12 @@ def build_ndo_env(meltano_env: dict[str, str], target: str, db: str) -> dict[str
         "DO_OPENSEARCH_USERNAME",
         "DO_OPENSEARCH_PASSWORD",
         "DO_OPENSEARCH_USE_SSL",
+        # NDO object storage moved to GCS (bitewell/helpers/cloud_storage.py):
+        # management commands read the input CSV from gs://$NDO_GCS_BUCKET/<key>,
+        # so both the runner's upload (upload.py) and this subprocess need the
+        # bucket + project. GCP_PROJECT_ID is optional (ADC default is fine).
+        "NDO_GCS_BUCKET",
+        "GCP_PROJECT_ID",
     ):
         val = os.environ.get(passthrough) or meltano_env.get(passthrough)
         if val:
@@ -396,7 +403,7 @@ def resolve_input(args: argparse.Namespace, spec: dict) -> tuple[str | None, int
     input_count = count_csv_rows(local_path)
 
     if args.dry_run:
-        print(f"[dry-run] would upload {local_path} to Spaces")
+        print(f"[dry-run] would upload {local_path} to gs://{os.environ.get('NDO_GCS_BUCKET', '?')}")
         if cleanup:
             local_path.unlink()
         return f"ops-skill/DRYRUN-{args.command}.csv", input_count
@@ -404,7 +411,7 @@ def resolve_input(args: argparse.Namespace, spec: dict) -> tuple[str | None, int
     from upload import upload as upload_fn  # local import; upload.py is a sibling
 
     key = upload_fn(local_path, args.command)
-    print(f"uploaded: s3://btw-nutrition/{key}")
+    print(f"uploaded: gs://{os.environ.get('NDO_GCS_BUCKET', '?')}/{key}")
     if cleanup:
         local_path.unlink()
     return key, input_count
@@ -817,7 +824,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("command", help="manage.py command name (see catalog.yaml)")
     parser.add_argument("--ids", help="Comma-separated product IDs")
     parser.add_argument("--csv", help="Path to a local CSV to upload")
-    parser.add_argument("--spaces-key", help="Existing key in btw-nutrition to use as-is")
+    parser.add_argument("--spaces-key", help="Existing key in the GCS bucket ($NDO_GCS_BUCKET) to use as-is")
     parser.add_argument("--source", help="NDO source (for file_or_source or source-only commands)")
     parser.add_argument(
         "--target", choices=("dev", "prod"), default="dev", help="Which NDO DB to target"

@@ -22,8 +22,8 @@ python manage.py backfill_fhs -f ops/my-ids.csv --sync true
 ## How it works
 
 1. Reads credentials from a `.env` (plugins-repo, NDO checkout, or `~/.config/ndo-run/.env` — see `discover_env_file` in [`scripts/ndo_run.py`](scripts/ndo_run.py))
-2. Builds a CSV (from pasted IDs) or accepts a local CSV path / existing Spaces key
-3. Uploads to `btw-nutrition` under `ops-skill/<timestamp>-<cmd>.csv`
+2. Builds a CSV (from pasted IDs) or accepts a local CSV path / existing GCS key
+3. Uploads to GCS (`$NDO_GCS_BUCKET`, e.g. `ndo-files-prod`) under `ops-skill/<timestamp>-<cmd>.csv` — where the management commands read it
 4. Runs `poetry run python manage.py <cmd>` in the `nutrition-data-ops/` checkout with translated env vars
 5. Streams output live
 
@@ -40,7 +40,7 @@ No SSH. No Celery dependency (forces `--sync true` by default). Explicit confirm
 │   └── tickets.md      # Linear ticket URLs (automation + HeroDB gap)
 └── scripts/
     ├── ndo_run.py      # main runner
-    └── upload.py       # boto3 upload to btw-nutrition
+    └── upload.py       # GCS upload (google-cloud-storage) to $NDO_GCS_BUCKET
 ```
 
 ## Prerequisites
@@ -61,7 +61,7 @@ Set the keys below in a `.env` discovered by the runner (recommended: `<foodheal
 |---|---|
 | `NDO_DEV_DATABASE_URL` / `NDO_PROD_DATABASE_URL` | GCP hero-db `ndo` via cloud-sql-proxy: `postgresql://ndo:<pwd>@127.0.0.1:<port>/ndo?sslmode=disable`. pwd — dev: GCP Secret Manager `ndo-db-pwd`; prod: Dagster secret `NDO_PROD_DB_PASSWORD` (cached `~/.herodb_ndo_password`). DO decommissioned (ENG-976). |
 | `FHS_API_URL`, `FHS_API_TOKEN` | DO App Platform → `waterfall-fhs-app` → Env Vars (or 1Password "FHS API tokens") |
-| `DO_SPACES_ACCESS_KEY`, `DO_SPACES_SECRET_KEY` | 1Password "DO Spaces — btw-nutrition prod write" (the project-default keys are scoped to `backfills-test` and can't write to btw-nutrition) |
+| `NDO_GCS_BUCKET` | GCS bucket the runner uploads op/send CSVs to, where NDO reads them post DO->GCP migration (e.g. `ndo-files-prod`). Auth is your gcloud ADC (`gcloud auth application-default login`) — no static keys. |
 
 **Required for `send_to_clients` / `approve_scores --send-to-clients` (client publish):**
 
