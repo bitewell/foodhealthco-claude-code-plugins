@@ -29,6 +29,7 @@ Start with `catalog.yaml` in this directory — it has the authoritative list of
 | "retry matching" / "waterfall match source X" | `match_products` |
 | "approve these scores" | `approve_scores` |
 | "send scores to client" / "publish" | `send_to_clients` |
+| "retract/null-out scores at client" / "product delisted or archived" | `retract_from_clients` |
 | "remove/delete these products safely" | `remove_products_and_scores` |
 | "export FHS for vendor X" | `generate_scores` |
 | "generate QA xlsx" / "score report for RD" / "fhs-app score those ids" | `generate_qa_report` |
