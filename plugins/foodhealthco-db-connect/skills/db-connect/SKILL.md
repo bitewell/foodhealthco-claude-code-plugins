@@ -25,7 +25,7 @@ The DigitalOcean NDO Postgres is **DELETED**. NDO now lives on the **same hero-d
 | **prod** | `foodhealth-platform-prod:us-central1:hero-db-prod` | `ndo` | `ndo` | Dagster Cloud secret `NDO_PROD_DB_PASSWORD` (cache to `~/.herodb_ndo_password`) |
 | **dev**  | `foodhealth-platform-dev:us-central1:hero-db-dev`   | `ndo` | `ndo` | Dagster Cloud secret `NDO_DEV_DB_PASSWORD` |
 
-Because the `ndo` role is password-based, it needs a **non-IAM** proxy (the default `--auto-iam-authn` proxy serves IAM only) — run one on its own port (see the NDO recipe below).
+The `ndo` role uses password auth, which **passes straight through the same `--auto-iam-authn` proxy** as HeroDB — connect on the standard ports (`:5433` prod / `:5434` dev) with `user=ndo` + the password. No separate non-IAM proxy is needed (confirmed 2026-08-19; the old dedicated `:5443` proxy is retired).
 
 ### HeroDB (GCP Cloud SQL)
 
@@ -82,16 +82,17 @@ chmod 600 ~/.herodb_dev_db_password
 
 ## Connecting
 
-### NDO (now via a non-IAM Cloud SQL proxy on hero-db)
+### NDO (via the SAME hero-db IAM proxy — `ndo` role + password)
 
-The DO host is gone; NDO is the `ndo` peer DB on hero-db (above). The `ndo` role is password-based, so use a proxy WITHOUT `--auto-iam-authn` on its own port:
+NDO is the `ndo` peer DB on hero-db (above). Password auth passes straight through the standard `--auto-iam-authn` proxy, so **reuse the same proxy/port as HeroDB** (`:5433` prod, `:5434` dev) — just connect as the `ndo` role with its password. No separate non-IAM proxy is needed (confirmed 2026-08-19; the retired `:5443` recipe no longer applies).
 
 ```bash
-cloud-sql-proxy foodhealth-platform-prod:us-central1:hero-db-prod --port 5443 &   # non-IAM
+# ensure the IAM proxy is up on :5433 (prod) — the same one HeroDB uses; see herodb_proxy_up below
+lsof -nP -iTCP:5433 -sTCP:LISTEN -t >/dev/null 2>&1 || \
+  cloud-sql-proxy foodhealth-platform-prod:us-central1:hero-db-prod --port 5433 --auto-iam-authn &
 PGPASSWORD=$(cat ~/.herodb_ndo_password) psql \
-  "host=127.0.0.1 port=5443 user=ndo dbname=ndo sslmode=disable" \
-  -c "<sql>"
-lsof -nP -iTCP:5443 -sTCP:LISTEN -t | xargs kill   # when done
+  "host=127.0.0.1 port=5433 user=ndo dbname=ndo sslmode=disable" -c "<sql>"
+# dev: same, but hero-db-dev on --port 5434 (dev NDO password in ~/.herodb_ndo_password)
 ```
 
 ### HeroDB (proxy required — IAM, passwordless)
@@ -136,13 +137,12 @@ lsof -nP -iTCP:5433 -sTCP:LISTEN -t | xargs kill   # prod
 
 #### Break-glass (password, no IAM)
 
-Only when IAM is unavailable. The `dagster` password path needs a proxy **without** `--auto-iam-authn` (one proxy can't serve both modes), so bring one up on a separate temp port and tear it down after:
+Only when IAM is unavailable (no ADC, or your account isn't in the IAM DB-users group). The `dagster` password also passes through the standard `--auto-iam-authn` proxy, so **reuse the same `:5433`/`:5434` proxy** — just connect as `user=dagster` with the password:
 
 ```bash
-cloud-sql-proxy "foodhealth-platform-prod:us-central1:hero-db-prod" --port 5443 &   # no --auto-iam-authn
+herodb_proxy_up prod   # the helper above — the standard :5433 --auto-iam-authn proxy
 PGPASSWORD=$(cat ~/.herodb_db_password) psql \
-  "host=127.0.0.1 port=5443 user=dagster dbname=herodb" -c "<sql>"
-lsof -nP -iTCP:5443 -sTCP:LISTEN -t | xargs kill
+  "host=127.0.0.1 port=5433 user=dagster dbname=herodb" -c "<sql>"
 ```
 
 > **Claude Code caveat.** The Bash tool tears down the proxy's process tree when the tool call returns, so a `&`/`nohup` proxy started *inside* a query call won't survive to the next call. When driving this from Claude Code, start each proxy in its **own** Bash call with `run_in_background: true`, wait for it to bind, then run queries in later calls. The listening-check (the `lsof -sTCP:LISTEN` line in `herodb_proxy_up`) is still the right precondition to run before every query — only the start path differs.
@@ -179,7 +179,7 @@ SELECT COUNT(*) FROM nutrient_profiles;
 
 - **IAM connect fails with an auth error.** The proxy needs Application Default Credentials (`gcloud auth application-default login`) to mint IAM tokens, and your account needs `roles/cloudsql.client` + `roles/cloudsql.instanceUser`. Pass `user=$(gcloud config get-value account)` — the IAM DB username is your full email, not `dagster`.
 - **IAM connects but `permission denied for table`.** Auth worked; you're only missing a table grant. Read access comes via the `gke-developers@foodhealth.co` group `SELECT` grant — if a newly created table isn't readable, the grant / default privileges may need extending (a `dagster`-owner break-glass task).
-- **Mixing IAM and password on one port.** A proxy started with `--auto-iam-authn` serves IAM only; a `dagster` password connection needs a separate proxy without that flag on its own port. Don't expect one proxy to do both.
+- **One proxy serves both IAM and password roles.** The `--auto-iam-authn` proxy injects your IAM token for IAM users *and* passes a normal password straight through for password roles — so a single proxy on `:5433`/`:5434` serves HeroDB-IAM, the `ndo` role, and `dagster` break-glass alike (confirmed for `ndo` on 2026-08-19). You do NOT need a separate non-IAM proxy on another port.
 - **Direct psql to HeroDB times out.** Cloud SQL public IP isn't allowlisted from arbitrary networks. Always use `cloud-sql-proxy`.
 - **`gcloud sql instances list` returns 0 items.** Cloud SQL Admin API isn't enabled in that GCP project, or your account lacks `roles/cloudsql.viewer`. Try `--project=foodhealth-platform-dev` if the current default doesn't have HeroDB.
 - **Background proxy dies between bash calls.** When invoking via Claude Code, use `run_in_background: true`. A simple `&` only lives as long as the parent shell.
