@@ -260,3 +260,85 @@ queries:
         AND (%(status)s = '' OR ingestion_status = %(status)s)
       ORDER BY created_at DESC
       LIMIT %(limit)s
+
+  score_qa:
+    description: >
+      Full scoring-QA breakdown for a set of products — everything that can
+      affect the FHS score in one read-out: the score + sub-scores, the
+      per-nutrient norms (how each input contributed), the raw macro inputs
+      (+ imputed variants), all is_* tag evaluations, ingredients, serving,
+      and the category range. Score + norms come from the approved result if
+      one exists, else the in-review result. Wide by design — the full rows
+      land in the CSV; only a sample prints. Use when a dietitian is QA'ing
+      why a product scored the way it did.
+    params:
+      ids:
+        type: int_list
+        required: true
+        max_items: 5000
+        help: comma-separated ingestion_productmatch ids to QA
+    sql: |
+      SELECT pm.id,
+             pm.product_name,
+             pm.brand_name,
+             pm.source,
+             pm.gtin,
+             pm.upc,
+             pm.product_category,
+             COALESCE(asr.category_lower_bound, sr.category_lower_bound) AS category_lower_bound,
+             COALESCE(asr.category_upper_bound, sr.category_upper_bound) AS category_upper_bound,
+             -- lifecycle context
+             pm.fhs                          AS pm_fhs,
+             sr.approved,
+             (asr.id IS NOT NULL)            AS is_approved,
+             asr.published,
+             -- the score being QA'd (approved if present, else in-review)
+             COALESCE(asr.fhs, sr.fhs)                    AS score_fhs,
+             COALESCE(asr.nds, sr.nds)                    AS nds,
+             COALESCE(asr.nbs, sr.nbs)                    AS nbs,
+             COALESCE(asr.iqm, sr.iqm)                    AS iqm,
+             COALESCE(asr.scaled_ratio, sr.scaled_ratio)  AS scaled_ratio,
+             -- per-nutrient norms: how each input contributed to the score
+             COALESCE(asr.sat_fat_norm, sr.sat_fat_norm)                         AS sat_fat_norm,
+             COALESCE(asr.trans_fat_norm, sr.trans_fat_norm)                     AS trans_fat_norm,
+             COALESCE(asr.cholesterol_norm, sr.cholesterol_norm)                 AS cholesterol_norm,
+             COALESCE(asr.sodium_norm, sr.sodium_norm)                           AS sodium_norm,
+             COALESCE(asr.added_sugars_norm, sr.added_sugars_norm)               AS added_sugars_norm,
+             COALESCE(asr.protein_norm, sr.protein_norm)                         AS protein_norm,
+             COALESCE(asr.carbs_norm, sr.carbs_norm)                             AS carbs_norm,
+             COALESCE(asr.sat_to_total_fat_norm, sr.sat_to_total_fat_norm)       AS sat_to_total_fat_norm,
+             COALESCE(asr.fiber_to_carb_norm, sr.fiber_to_carb_norm)             AS fiber_to_carb_norm,
+             COALESCE(asr.potassium_to_sodium_norm, sr.potassium_to_sodium_norm) AS potassium_to_sodium_norm,
+             COALESCE(asr.unsat_to_sat_fat_norm, sr.unsat_to_sat_fat_norm)       AS unsat_to_sat_fat_norm,
+             -- raw macro inputs (+ imputed variants the scorer falls back to)
+             pm.calories, pm.calories_imputed,
+             pm.total_fat, pm.total_fat_imputed,
+             pm.sat_fat, pm.trans_fat, pm.unsat_fat,
+             pm.cholesterol, pm.sodium,
+             pm.carbs, pm.carbs_imputed,
+             pm.dietary_fiber, pm.total_sugars,
+             pm.added_sugars, pm.added_sugars_imputed,
+             pm.protein, pm.protein_imputed,
+             pm.potassium,
+             -- serving basis
+             pm.serving_qty, pm.serving_size, pm.serving_unit, pm.serving_weight_grams,
+             -- all score-affecting tag evaluations
+             pm.is_carmine, pm.is_artificial_red_color, pm.is_artificial_colors,
+             pm.is_potassium_bromate, pm.is_ph_oil, pm.is_aspartame,
+             pm.is_acesulfame_potassium, pm.is_brominated_vegetable_oil, pm.is_caffeine,
+             pm.is_saccharin, pm.is_caregeenan, pm.is_mercury_fish,
+             pm.is_artificial_sweeteners, pm.is_phosphate_additives, pm.is_guar_gum,
+             pm.is_polysorbate60, pm.is_propylene_glycol, pm.is_xanthan_gum, pm.is_msg,
+             pm.is_titanium_dioxide, pm.is_corn_syrup, pm.is_artificial_flavors,
+             pm.is_artificial_preservatives, pm.is_sulfites, pm.is_sugars_added,
+             pm.is_salt_added, pm.is_omega_three, pm.is_whole_grain, pm.is_gluten,
+             pm.is_refined_grains, pm.is_seed_oil, pm.is_deep_fried, pm.is_healthy_oils,
+             pm.is_natural_non_kcal_sweeteners, pm.is_natural_additives,
+             pm.is_unspecific_ingredient, pm.is_propellant, pm.is_starch,
+             pm.is_active_live_cultures, pm.is_juice_concentrate,
+             pm.ingredients_text
+      FROM dietitian.ingestion_productmatch pm
+      LEFT JOIN dietitian.scoring_review_approvedscoringresult asr ON asr.product_match_id = pm.id
+      LEFT JOIN dietitian.scoring_review_scoringresult sr ON sr.product_match_id = pm.id
+      WHERE pm.id = ANY(%(ids)s)
+      ORDER BY pm.id

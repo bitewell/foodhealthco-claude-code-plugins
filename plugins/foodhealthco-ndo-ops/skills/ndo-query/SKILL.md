@@ -1,6 +1,6 @@
 ---
 name: ndo-query
-description: Look up NDO scoring data through the catalogued, read-only query set (dietitian schema). Use when a dietitian or operator asks about score status, the approval queue, recent approvals, unsent/unpublished scores, per-source counts, GTIN/UPC product lookups, scorability preflights, or ingestion status. Triggers include "what's the status of these products", "what's in my review queue", "was this approved/sent", "look up this UPC", "can these be scored". NOT for arbitrary SQL (engineers use db-connect) and NOT for writes (scoring/approving/publishing runs via ndo-run or the Dagster jobs).
+description: Look up NDO scoring data through the catalogued, read-only query set (dietitian schema). Use when a dietitian or operator asks about score status, QA'ing a score (the tags/macros/norms behind it), the approval queue, recent approvals, unsent/unpublished scores, per-source counts, GTIN/UPC product lookups, scorability preflights, or ingestion status. Triggers include "what's the status of these products", "QA these scores / why did this score that", "what's in my review queue", "was this approved/sent", "look up this UPC", "can these be scored". NOT for arbitrary SQL (engineers use db-connect) and NOT for writes (scoring/approving/publishing runs via ndo-run or the Dagster jobs).
 ---
 
 # ndo-query
@@ -27,6 +27,7 @@ the dietitian-safe complement to `ndo-run` (which executes ops) and
 | User says… | Query |
 |---|---|
 | "status of these products" / "were these scored/approved/sent" | `score_status --param ids=…` |
+| "QA these scores" / "why did this score that" / "check the tags + macros behind the score" | `score_qa --param ids=…` |
 | "what's in the review queue" / "what needs approval" | `approval_queue [--param source=…]` |
 | "what got approved this week" | `recent_approvals [--param days=7]` |
 | "approved but not sent" / "send backlog" | `unsent_approved [--param source=…]` |

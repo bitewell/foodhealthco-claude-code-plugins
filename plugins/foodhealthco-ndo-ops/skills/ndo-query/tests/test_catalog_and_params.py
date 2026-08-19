@@ -143,3 +143,23 @@ def test_list_works_without_db(capsys):
     assert ndo_query.main(["--list"]) == 0
     out = capsys.readouterr().out
     assert "score_status" in out and "approval_queue" in out
+
+
+def test_score_qa_covers_the_score_envelope():
+    """score_qa is the QA read-out — it must expose the score, the per-nutrient
+    norms, the raw macro inputs, and the is_* tag evaluations, so dietitians can
+    QA *why* a product scored what it did via the template rather than ad-hoc
+    SELECT. A silent drop here would push QA back to raw queries."""
+    sql = CATALOG["score_qa"]["sql"]
+    for norm in ["sat_fat_norm", "sodium_norm", "added_sugars_norm",
+                 "protein_norm", "fiber_to_carb_norm", "unsat_to_sat_fat_norm"]:
+        assert norm in sql, f"score_qa missing per-nutrient norm: {norm}"
+    for macro in ["calories", "sodium", "added_sugars", "protein", "dietary_fiber"]:
+        assert macro in sql, f"score_qa missing macro input: {macro}"
+    for tag in ["is_seed_oil", "is_artificial_colors", "is_whole_grain",
+                "is_sugars_added", "is_msg"]:
+        assert tag in sql, f"score_qa missing tag evaluation: {tag}"
+    assert "ingredients_text" in sql
+    # guard against silent truncation of the ~40-tag set
+    tag_refs = sql.count("pm.is_")
+    assert tag_refs >= 35, f"score_qa exposes only {tag_refs} is_* tags (expected ~40)"
