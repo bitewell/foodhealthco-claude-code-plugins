@@ -304,6 +304,24 @@ scoring_review:
       -c is optional; if omitted, publishes to all clients matching the score rows.
       No --sync flag: runs synchronously in-process.
 
+  retract_from_clients:
+    help: Null-out (retract) scores at a client for archived/delisted products — the removal counterpart of send_to_clients
+    input: file
+    args: [-f, --file, -c, --client_id]
+    sync_flag: null
+    csv_schema:
+      id_columns: [gtin, int_gtin]
+    notes: |
+      Sends `nutritionalScore: null` so the client clears the score for products
+      that no longer have an approved score (e.g. non-food archived from
+      approved). Resolves gtin -> KUPID straight from the Kroger ForIngestion
+      rows — it does NOT read approved scores (gone by retraction time) — so the
+      CSV MUST carry `gtin`. -c defaults to `kroger` (only Kroger supported
+      today). OUTWARD side effect (prod). No --sync flag.
+      Tip: `archive_table --retract-from-clients kroger` (passthrough) chains
+      archive -> retraction in one op, capturing the gtins before the ASR rows
+      are deleted.
+
   publish_scores_to_client:
     help: Push CSV rows directly to FHS API /score/result (raw external publish)
     input: file
